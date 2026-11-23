@@ -21,7 +21,7 @@ function iconByName(name) {
 }
 function charURL(id) { return sprURL(CHAR_SPR[id][0], 'c' + id); }
 
-const screens = ['title', 'chars', 'shop', 'book', 'settings', 'levelup', 'chest', 'pause', 'result'];
+const screens = ['title', 'chars', 'shop', 'book', 'settings', 'levelup', 'chest', 'pause', 'result', 'mp', 'lobby'];
 function show(id) {
   for (const s of screens) $(s).classList.toggle('on', s === id);
   $('pauseBtn').style.display = state === 'play' && !id ? 'block' : 'none';
@@ -67,12 +67,13 @@ function showChars() {
       ${best ? `<div style="font-size:12px;margin-top:2px" class="${save.clears[c.id] ? 'gold-t' : 'dim'}">${save.clears[c.id] ? '★ 클리어 · ' : ''}최고 ${fmtTime(best)}</div>` : ''}</div>
     </div>`;
   const go = $('bGo');
-  if (owned) { go.textContent = '출발!'; go.disabled = false; }
+  if (owned) { go.textContent = charPickMode ? '이 캐릭터로!' : '출발!'; go.disabled = false; }
   else { go.textContent = `● ${c.cost} 골드로 해금`; go.disabled = save.gold < c.cost; }
   show('chars');
 }
-on('bStart', showChars);
-on('bCharBack', showTitle);
+let charPickMode = null; // set to a callback when choosing a character for the co-op lobby
+on('bStart', () => { charPickMode = null; showChars(); });
+on('bCharBack', () => { if (charPickMode) { const f = charPickMode; charPickMode = null; f(null); } else showTitle(); });
 on('bGo', () => {
   const c = CHARS.find(x => x.id === selChar);
   if (!save.chars[c.id]) {
@@ -83,10 +84,11 @@ on('bGo', () => {
     return;
   }
   save.lastChar = c.id; persist();
+  if (charPickMode) { const f = charPickMode; charPickMode = null; f(c.id); return; }
   startRun(c.id);
 });
 function startRun(id) {
-  newRun(id);
+  newRun(typeof id === 'string' ? [{ char: id, power: save.power, ctrl: 'local' }] : id);
   state = 'play';
   input.active = false;
   show(null);
@@ -221,11 +223,12 @@ function applyChoice(c) {
   if (c.type === 'wnew') addWeapon(c.id);
   else if (c.type === 'wup') levelWeapon(R.weapons.find(w => w.id === c.id));
   else if (c.type === 'pnew' || c.type === 'pup') addPassive(c.id);
-  else if (c.type === 'gold') R.gold += 25 * st.greed;
+  else if (c.type === 'gold') R.gold += 25;
   else if (c.type === 'heal') R.player.hp = Math.min(st.maxHp, R.player.hp + 30);
-  for (const w of R.weapons) if (evoReady(w) && !R.evoHinted[w.id]) {
-    R.evoHinted[w.id] = true;
-    banner(`${WEAPONS[w.id].name} 진화 준비 완료! 보물상자를 찾으세요`, '#ffd040', 3.5);
+  const hinted = R.player.evoHinted;
+  for (const w of R.weapons) if (evoReady(w) && !hinted[w.id]) {
+    hinted[w.id] = true;
+    pbanner(`${WEAPONS[w.id].name} 진화 준비 완료! 보물상자를 찾으세요`, '#ffd040', 3.5);
   }
 }
 function choiceCard(c) {
@@ -250,30 +253,46 @@ function choiceCard(c) {
 let curChoices = [];
 function openLevelUp(reroll) {
   if (SIM) { simPick(); return; }
+  showChoices(rollChoices(), reroll);
+}
+// shows a set of level-up choices for the local hero (on a co-op guest they come from the host)
+function showChoices(choices, quiet) {
+  const me = run.me;
   state = 'levelup';
   input.active = false;
-  if (!reroll) sfx.level();
-  curChoices = rollChoices();
+  if (!quiet) sfx.level();
+  curChoices = choices;
   const box = $('lvCards');
   box.innerHTML = curChoices.map(choiceCard).join('');
   [...box.children].forEach((el, i) => el.onclick = () => {
     sfx.click();
+    if (NET.role === 'guest') { netSend({ t: 'pick', i }); waitHost(); return; }
     applyChoice(curChoices[i]);
     finishLevel();
   });
-  $('bReroll').textContent = `새로고침 (${run.rerolls})`;
-  $('bReroll').disabled = run.rerolls <= 0;
-  $('bSkip').textContent = `건너뛰기 (${run.skips})`;
-  $('bSkip').disabled = run.skips <= 0;
+  $('bReroll').textContent = `새로고침 (${me.rerolls})`;
+  $('bReroll').disabled = me.rerolls <= 0;
+  $('bSkip').textContent = `건너뛰기 (${me.skips})`;
+  $('bSkip').disabled = me.skips <= 0;
   show('levelup');
 }
+// guest: choice sent, keep playing view until the host answers
+function waitHost() { state = 'play'; show(null); }
 function finishLevel() {
-  run.pending--;
-  if (run.pending > 0) openLevelUp();
+  run.me.pending--;
+  if (run.me.pending > 0) openLevelUp();
   else { state = 'play'; show(null); }
 }
-on('bReroll', () => { if (run.rerolls <= 0) return; run.rerolls--; openLevelUp(true); });
-on('bSkip', () => { if (run.skips <= 0) return; run.skips--; run.xp += run.xpNext * 0.1; finishLevel(); });
+on('bReroll', () => {
+  if (run.me.rerolls <= 0) return;
+  if (NET.role === 'guest') { netSend({ t: 'reroll' }); return; }
+  run.me.rerolls--; openLevelUp(true);
+});
+on('bSkip', () => {
+  if (run.me.skips <= 0) return;
+  if (NET.role === 'guest') { netSend({ t: 'skip' }); waitHost(); return; }
+  run.me.skips--; run.xp += run.xpNext * 0.1; finishLevel();
+});
 
 // ============================================================
 // chest
@@ -293,14 +312,18 @@ function openChest(boss) {
     const pool = [];
     for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ kind: 'w', id: w.id });
     for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ kind: 'p', id });
-    if (!pool.length) { items.push({ kind: 'gold' }); R.gold += 40 * st.greed; continue; }
+    if (!pool.length) { items.push({ kind: 'gold' }); R.gold += 40; continue; }
     const it = pick(pool);
     if (it.kind === 'w') { const w = R.weapons.find(x => x.id === it.id); levelWeapon(w); it.lv = w.lvl; } else { addPassive(it.id); it.lv = R.passives[it.id]; }
     items.push(it);
   }
-  const g = Math.round((boss ? rand(80, 150) : rand(20, 60)) * (late ? 1.5 : 1) * st.greed);
+  const g = Math.round((boss ? rand(80, 150) : rand(20, 60)) * (late ? 1.5 : 1));
   R.gold += g;
   if (SIM) return;
+  if (R.player !== R.me) { netChest(R.player, items, count, Math.round(g * st.greed)); return; }
+  showChest(items, count, Math.round(g * st.greed));
+}
+function showChest(items, count, g) {
   state = 'chest';
   input.active = false;
   sfx.chest(); vibrate(60);
@@ -315,7 +338,7 @@ function openChest(boss) {
   show('chest');
   [...$('chestItems').children].forEach((el, i) => setTimeout(() => { el.classList.add('show'); tone(600 + i * 120, 0.1, 'square', 0.04); }, 250 + i * 280));
 }
-on('bChestOk', () => { state = 'play'; show(null); });
+on('bChestOk', () => { state = 'play'; show(null); if (NET.role === 'guest') netSend({ t: 'chestOk' }); });
 
 // ============================================================
 // pause / results
@@ -341,18 +364,35 @@ function openPause() {
   $('pRecipes').innerHTML = rec ? `<div class="dim center" style="font-size:12px;margin-bottom:4px">보유 무기 진화법</div>${rec}` : '<div class="dim center" style="font-size:12px">모든 무기가 진화했어요!</div>';
   $('pToggles').innerHTML = togglesHTML();
   bindToggles($('pToggles'));
+  $('bQuit').textContent = NET.role ? '이번 판 나가기' : '포기하기';
   show('pause');
+  if (NET.role === 'guest') netSend({ t: 'hold', on: true });
+}
+function resume() {
+  if (state !== 'pause') return;
+  state = 'play'; show(null);
+  if (NET.role === 'guest') netSend({ t: 'hold', on: false });
 }
 $('pauseBtn').addEventListener('click', openPause);
-on('bResume', () => { state = 'play'; show(null); });
-on('bQuit', () => { if (confirm('이번 판을 포기할까요? 모은 골드는 받아요.')) gameOver(); });
+on('bResume', resume);
+on('bQuit', () => {
+  const msg = NET.role === 'host' ? '이번 판을 끝낼까요? 동료의 게임도 함께 끝나요. 모은 골드는 받아요.'
+    : NET.role === 'guest' ? '이번 판에서 나갈까요? 동료는 혼자 계속해요. 모은 골드는 받아요.' : '이번 판을 포기할까요? 모은 골드는 받아요.';
+  if (!confirm(msg)) return;
+  if (NET.role === 'guest') netSend({ t: 'quit' });
+  gameOver();
+});
 
-function gameOver() {
-  const R = run;
+function gameOver(note) {
+  const R = run, me = R.me;
+  if (state === 'result') return;
   state = 'result';
   input.active = false;
+  use(me);
+  if (NET.role === 'host') netGameOver();
   const bonus = Math.floor(R.t / 60) * 10 * st.greed;
-  const earned = Math.floor(R.gold + bonus);
+  const gold = R.gold * st.greed;
+  const earned = Math.floor(gold + bonus);
   save.gold += earned;
   save.runs++; save.kills += R.kills;
   const id = R.char.id;
@@ -360,21 +400,23 @@ function gameOver() {
   if (R.cleared) save.clears[id] = true;
   persist();
   if (SIM) return;
-  $('rTitle').textContent = R.cleared ? '★ 생존 성공! ★' : '쓰러졌다…';
+  $('rTitle').textContent = note || (R.cleared ? '★ 생존 성공! ★' : '쓰러졌다…');
   $('rTitle').style.color = R.cleared ? '#ffd040' : '#ff8090';
   $('rStats').innerHTML = [
     ['캐릭터', R.char.name], ['생존 시간', fmtTime(R.t)], ['레벨', R.level], ['처치', R.kills],
-    ['획득 골드', `<span class="gold-t">● ${Math.floor(R.gold)}</span>`], ['생존 보너스', `<span class="gold-t">● ${Math.floor(bonus)}</span>`],
+    ['획득 골드', `<span class="gold-t">● ${Math.floor(gold)}</span>`], ['생존 보너스', `<span class="gold-t">● ${Math.floor(bonus)}</span>`],
     ['합계', `<span class="gold-t">● ${earned}</span>`],
   ].map(([a, b]) => `<div class="stat"><span class="dim">${a}</span><b>${b}</b></div>`).join('');
-  const rows = R.weapons.map(w => ({ w, d: R.dmgBy[w.id] || 0 })).sort((a, b) => b.d - a.d);
+  const rows = R.weapons.map(w => ({ w, d: me.dmgBy[w.id] || 0 })).sort((a, b) => b.d - a.d);
   $('rDmg').innerHTML = '<div class="dim center" style="font-size:12px;margin-bottom:4px">무기별 피해량</div>' + rows.map(({ w, d }) =>
     `<div class="recipe"><img class="ico sm" src="${weaponIcon(w.id, w.evo)}" alt=""><div class="nm"><b>${weaponName(w)}</b> <span class="dim">Lv${w.lvl}</span></div><b>${Math.round(d).toLocaleString()}</b></div>`).join('');
+  $('bAgain').textContent = NET.role ? '방으로' : '다시 하기';
+  $('bMenu').textContent = NET.role ? '방 나가기' : '메인으로';
   show('result');
   sfx.boss();
 }
-on('bAgain', () => startRun(run.char.id));
-on('bMenu', showTitle);
+on('bAgain', () => { if (NET.role) showLobby(); else startRun(run.char.id); });
+on('bMenu', () => { if (NET.role) netLeave(); showTitle(); });
 
 // ============================================================
 // input
@@ -404,7 +446,7 @@ window.addEventListener('keydown', e => {
   input.keys[e.code] = true;
   if (e.code === 'Escape' || e.code === 'KeyP') {
     if (state === 'play') openPause();
-    else if (state === 'pause') { state = 'play'; show(null); }
+    else if (state === 'pause') resume();
   }
 });
 window.addEventListener('keyup', e => { input.keys[e.code] = false; });
@@ -416,15 +458,18 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 // balance simulation (?sim=1): headless bot that kites enemies
 // ============================================================
 function simPick() {
-  while (run.pending > 0) {
-    const ch = rollChoices();
-    ch.sort((a, b) => ({ wup: 0, pup: 1, wnew: 2, pnew: 3 }[a.type] ?? 4) - ({ wup: 0, pup: 1, wnew: 2, pnew: 3 }[b.type] ?? 4));
-    applyChoice(ch[0]);
-    run.pending--;
+  for (const p of run.players) {
+    use(p);
+    while (p.pending > 0) {
+      const ch = rollChoices();
+      ch.sort((a, b) => ({ wup: 0, pup: 1, wnew: 2, pnew: 3 }[a.type] ?? 4) - ({ wup: 0, pup: 1, wnew: 2, pnew: 3 }[b.type] ?? 4));
+      applyChoice(ch[0]);
+      p.pending--;
+    }
   }
+  use(run.me);
 }
-function simBot() {
-  const P = run.player;
+function simBot(P = run.me) {
   let fx = 0, fy = 0;
   for (const e of run.enemies) {
     const dx = P.x - e.x, dy = P.y - e.y, d2 = dx * dx + dy * dy;
@@ -442,21 +487,25 @@ function simBot() {
   }
   fx += Math.cos(run.t * 0.3) * 0.006; fy += Math.sin(run.t * 0.3) * 0.006;
   const l = Math.hypot(fx, fy) || 1;
-  input.bot = [fx / l, fy / l];
+  if (P === run.me) input.bot = [fx / l, fy / l];
+  else P.bot = [fx / l, fy / l];
 }
-function runSim(charId, powered) {
+function runSim(charId, powered, duo) {
   const saved = save;
   save = loadSave(); save.sound = false;
   if (powered) for (const p of POWERUPS) save.power[p.id] = Math.min(p.max, 2);
-  newRun(charId);
+  const list = [{ char: charId, power: save.power, ctrl: 'local' }];
+  if (duo) list.push({ char: duo, power: save.power, ctrl: 'bot' });
+  newRun(list);
   state = 'play';
   let steps = 0, nextSnap = 60;
   const dt = 1 / 30, snaps = [];
   while (state === 'play' && run.t < RUN_END + 30 && steps < 30 * 60 * 25) {
-    simBot(); update(dt); steps++;
+    for (const p of run.players) if (p.ctrl !== 'remote') simBot(p);
+    update(dt); if (run.me.pending) simPick(); steps++;
     if (run.t >= nextSnap) { nextSnap += 60; snaps.push(`${Math.round(run.t / 60)}m L${run.level} k${run.kills} e${run.enemies.length} dmgIn${Math.round(run.taken || 0)}`); }
   }
-  const out = { char: charId, powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.weapons.map(w => w.id + (w.evo ? '*' : w.lvl)).join(','), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
+  const out = { char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
   save = saved;
   input.bot = null;
   return out;
@@ -472,7 +521,8 @@ if (SIM) {
   window.SIM_GOD = qs.get('god') === '1';
   window.SIM_VAC = qs.get('vac') === '1';
   const res = [];
-  for (const c of chars) { res.push(runSim(c, false)); res.push(runSim(c, true)); }
+  const duo = qs.get('duo');
+  for (const c of chars) { res.push(runSim(c, false, duo)); res.push(runSim(c, true, duo)); }
   const pre = document.createElement('pre');
   pre.id = 'simout';
   pre.textContent = JSON.stringify(res);
@@ -483,16 +533,19 @@ if (SIM) {
   const qs = new URLSearchParams(location.search);
   if (qs.get('shot')) {
     // debug: fast-forward a bot run to inspect visuals (?shot=char&t=secs&ui=levelup|pause|chest|result)
-    newRun(qs.get('shot')); state = 'play'; show(null);
+    const list = [{ char: qs.get('shot'), power: save.power, ctrl: 'local' }];
+    if (qs.get('duo')) list.push({ char: qs.get('duo'), power: save.power, ctrl: 'bot' });
+    newRun(list); state = 'play'; show(null);
     const until = +qs.get('t') || 60;
     while (run.t < until && state !== 'result') {
-      simBot(); update(1 / 30);
+      for (const p of run.players) simBot(p);
+      update(1 / 30);
       if (state === 'levelup') { simPick(); state = 'play'; show(null); }
       if (state === 'chest') { state = 'play'; show(null); }
     }
     input.bot = null;
     const ui = qs.get('ui');
-    if (ui === 'levelup') { run.pending = 1; openLevelUp(); }
+    if (ui === 'levelup') { run.me.pending = 1; openLevelUp(); }
     if (ui === 'pause') openPause();
     if (ui === 'chest') openChest(true);
     if (ui === 'result') gameOver();

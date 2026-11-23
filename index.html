@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#120d1a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="별빛 생존자">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>별빛 생존자</title>
+<style>
+@font-face{font-family:G;src:url(fonts/Galmuri11.woff2) format('woff2');font-display:swap}
+@font-face{font-family:G;font-weight:700;src:url(fonts/Galmuri11-Bold.woff2) format('woff2');font-display:swap}
+:root{--bg:#120d1a;--panel:#221932;--panel2:#2d2242;--line:#5b4a7c;--gold:#ffd040;--text:#f4eede;--dim:#a99dc2;--red:#ff5566;--green:#5ae07a;--blue:#5aa8ff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;overscroll-behavior:none;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;font-family:G,monospace;color:var(--text)}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+#safe{position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);left:env(safe-area-inset-left);right:env(safe-area-inset-right);pointer-events:none;visibility:hidden}
+.screen{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:flex-start;padding:max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));background:rgba(10,6,18,.82);overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;z-index:5}
+.screen.on{display:flex}
+.screen>.wrap{width:100%;max-width:440px;margin:auto 0}
+.panel{background:var(--panel);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 5px 0 #000;padding:14px;margin:10px 0}
+.btn{display:block;font:inherit;font-weight:700;font-size:17px;color:var(--text);background:#3b2d57;border:3px solid #000;box-shadow:inset 0 -4px 0 #24193a,inset 0 0 0 2px #6a5590;padding:12px 14px;cursor:pointer;width:100%;margin:8px 0;text-align:center}
+.btn:active{transform:translateY(2px);box-shadow:inset 0 -2px 0 #24193a,inset 0 0 0 2px #6a5590}
+.btn.gold{background:#b07a18;box-shadow:inset 0 -4px 0 #6e4a0e,inset 0 0 0 2px #ffd965;color:#fff8e0}
+.btn.red{background:#8a2a3a;box-shadow:inset 0 -4px 0 #4e1420,inset 0 0 0 2px #e05a70}
+.btn.small{font-size:14px;padding:9px 10px;margin:4px 0}
+.btn:disabled{opacity:.4;pointer-events:none}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+.logo{text-align:center;margin:8px 0 2px;font-weight:700;font-size:40px;line-height:1.1;color:#ffe48a;text-shadow:0 3px 0 #a0521a,0 6px 0 #000,3px 0 0 #000,-3px 0 0 #000,0 -3px 0 #000}
+.sub{text-align:center;color:var(--dim);font-size:13px;letter-spacing:3px;margin-bottom:6px}
+h2{margin:4px 0 10px;text-align:center;font-size:24px;color:#ffe48a;text-shadow:0 3px 0 #000}
+.gold-t{color:var(--gold)}
+.dim{color:var(--dim)}
+.center{text-align:center}
+.hint{font-size:13px;color:var(--dim);text-align:center;line-height:1.6;margin:8px 0}
+.card{display:flex;gap:10px;align-items:center;background:var(--panel2);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 4px 0 #000;padding:10px;margin:10px 0;cursor:pointer;position:relative}
+.card:active{transform:translateY(2px)}
+.card.evo{box-shadow:inset 0 0 0 2px var(--gold),0 4px 0 #000}
+.ico{width:44px;height:44px;flex:none;image-rendering:pixelated;background:#140e1e;border:2px solid #000;box-shadow:inset 0 0 0 2px #3a2d52;padding:5px}
+.ico.sm{width:32px;height:32px;padding:3px}
+.card .t{font-weight:700;font-size:16px}
+.card .d{font-size:13px;color:var(--dim);margin-top:3px;line-height:1.45}
+.tag{display:inline-block;font-size:11px;padding:2px 5px;margin-left:6px;vertical-align:2px;background:#000;color:var(--gold);border:1px solid var(--gold)}
+.tag.new{color:#7df09a;border-color:#7df09a}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.cc{background:var(--panel2);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 4px 0 #000;padding:8px 4px;text-align:center;cursor:pointer;font-size:12px;line-height:1.35}
+.cc.sel{box-shadow:inset 0 0 0 3px var(--gold),0 4px 0 #000}
+.cc.lock{filter:grayscale(.8) brightness(.7)}
+.cc img{width:48px;height:64px;image-rendering:pixelated;display:block;margin:0 auto 4px}
+.cc .n{font-weight:700;font-size:14px;color:var(--text)}
+.pips{display:flex;gap:3px;justify-content:center;margin:5px 0}
+.pip{width:9px;height:9px;background:#120c1b;border:1px solid #000;box-shadow:inset 0 0 0 1px #4b3c66}
+.pip.on{background:var(--gold);box-shadow:none}
+.pu{background:var(--panel2);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 4px 0 #000;padding:8px 6px;text-align:center;cursor:pointer;font-size:12px}
+.pu img{width:36px;height:36px;image-rendering:pixelated}
+.pu .n{font-weight:700;font-size:13px;margin-top:2px}
+.pu .c{color:var(--gold);font-weight:700;margin-top:2px}
+.pu.max .c{color:var(--green)}
+.pu.poor .c{color:var(--red)}
+.stat{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #3d3058;font-size:14px}
+.stat:last-child{border:0}
+.inv{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.inv .slot{position:relative}
+.inv .lv{position:absolute;right:-3px;bottom:-3px;background:#000;color:var(--gold);font-size:10px;padding:0 3px;font-weight:700}
+.recipe{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px dashed #3d3058;font-size:13px}
+.recipe:last-child{border:0}
+.recipe .plus{color:var(--dim);font-weight:700}
+.recipe .nm{flex:1;line-height:1.35}
+.big{font-size:30px;font-weight:700;text-align:center;margin:6px 0}
+.toggle{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:15px}
+.toggle button{font:inherit;font-weight:700;width:76px;padding:6px;border:3px solid #000;background:#2a2040;color:var(--dim)}
+.toggle button.on{background:#2e7a45;color:#fff}
+#pauseBtn{position:fixed;z-index:4;right:calc(10px + env(safe-area-inset-right));top:calc(env(safe-area-inset-top) + 54px);width:40px;height:40px;font:inherit;font-weight:700;font-size:16px;background:rgba(30,22,46,.85);color:var(--text);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line);display:none;padding:0}
+.chest-item{opacity:0;transform:translateY(8px);transition:opacity .3s,transform .3s}
+.chest-item.show{opacity:1;transform:none}
+.flex-col{display:flex;flex-direction:column;gap:2px}
+#levelup .wrap,#chest .wrap{margin-top:auto;margin-bottom:auto}
+.lvtitle{font-size:30px}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="safe"></div>
+<button id="pauseBtn" aria-label="일시정지">II</button>
+
+<div id="title" class="screen"><div class="wrap">
+  <div class="logo">별빛 생존자</div>
+  <div class="sub">STARFALL SURVIVORS</div>
+  <div class="panel center">
+    <div class="dim" style="font-size:13px">보유 골드</div>
+    <div class="big gold-t" id="tGold">0</div>
+    <div class="dim" style="font-size:12px" id="tBest"></div>
+  </div>
+  <button class="btn gold" id="bStart">게임 시작</button>
+  <div class="row">
+    <button class="btn" id="bShop">파워업</button>
+    <button class="btn" id="bBook">진화 도감</button>
+  </div>
+  <button class="btn small" id="bSettings">설정</button>
+  <div class="hint">화면 아무 곳이나 드래그해서 이동하세요. 공격은 자동이에요.<br>20분을 버티면 승리! 정예 몬스터의 보물상자로 무기를 진화시키세요.</div>
+</div></div>
+
+<div id="chars" class="screen"><div class="wrap">
+  <h2>캐릭터 선택</h2>
+  <div class="grid3" id="charGrid"></div>
+  <div class="panel" id="charInfo"></div>
+  <button class="btn gold" id="bGo">출발!</button>
+  <button class="btn small" id="bCharBack">뒤로</button>
+</div></div>
+
+<div id="shop" class="screen"><div class="wrap">
+  <h2>파워업</h2>
+  <div class="center" style="margin-bottom:8px">보유 골드 <b class="gold-t" id="sGold">0</b></div>
+  <div class="grid3" id="shopGrid"></div>
+  <div class="panel" id="shopInfo" style="font-size:13px;line-height:1.5">파워업은 모든 캐릭터에게 영구 적용돼요. 하나 살 때마다 다음 가격이 조금씩 올라가요.</div>
+  <div class="row">
+    <button class="btn small red" id="bRefund">전부 환불</button>
+    <button class="btn small" id="bShopBack">뒤로</button>
+  </div>
+</div></div>
+
+<div id="book" class="screen"><div class="wrap">
+  <h2>진화 도감</h2>
+  <div class="panel" id="bookList"></div>
+  <div class="hint">무기를 최대 레벨(8)로 만들고 짝이 되는 패시브를 가진 상태에서<br>정예·보스 몬스터가 떨군 보물상자를 열면 진화해요.</div>
+  <button class="btn small" id="bBookBack">뒤로</button>
+</div></div>
+
+<div id="settings" class="screen"><div class="wrap">
+  <h2>설정</h2>
+  <div class="panel" id="setList"></div>
+  <button class="btn small red" id="bReset">세이브 데이터 초기화</button>
+  <button class="btn small" id="bSetBack">뒤로</button>
+</div></div>
+
+<div id="levelup" class="screen"><div class="wrap">
+  <h2 class="lvtitle">레벨 업!</h2>
+  <div id="lvCards"></div>
+  <div class="row">
+    <button class="btn small" id="bReroll">새로고침</button>
+    <button class="btn small" id="bSkip">건너뛰기</button>
+  </div>
+</div></div>
+
+<div id="chest" class="screen"><div class="wrap">
+  <h2 class="lvtitle" id="chestTitle">보물상자!</h2>
+  <div id="chestItems"></div>
+  <div class="center gold-t" id="chestGold" style="font-size:18px;margin:8px 0"></div>
+  <button class="btn gold" id="bChestOk">확인</button>
+</div></div>
+
+<div id="pause" class="screen"><div class="wrap">
+  <h2>일시정지</h2>
+  <div class="panel">
+    <div class="dim center" style="font-size:12px">무기</div>
+    <div class="inv" id="pWeapons"></div>
+    <div class="dim center" style="font-size:12px">패시브</div>
+    <div class="inv" id="pPassives"></div>
+  </div>
+  <div class="panel" id="pStats"></div>
+  <div class="panel" id="pRecipes"></div>
+  <div class="panel" id="pToggles"></div>
+  <button class="btn gold" id="bResume">계속하기</button>
+  <button class="btn small red" id="bQuit">포기하기</button>
+</div></div>
+
+<div id="result" class="screen"><div class="wrap">
+  <h2 id="rTitle">게임 오버</h2>
+  <div class="panel" id="rStats"></div>
+  <div class="panel" id="rDmg"></div>
+  <div class="row">
+    <button class="btn gold" id="bAgain">다시 하기</button>
+    <button class="btn" id="bMenu">메인으로</button>
+  </div>
+</div></div>
+
+<div id="loading">불러오는 중…</div>
+<script src="data.js"></script>
+<script src="engine.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>

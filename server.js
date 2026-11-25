@@ -1,5 +1,8 @@
 'use strict';
-// Static file server + tiny WebSocket relay that pairs two phones by a 4-digit room code.
+// Static file server + tiny WebSocket relay that groups up to 4 phones by a 4-digit room code.
+// The host (slot 0) runs the game; guests take slots 1-3.
+//   guest → host: JSON only; the relay stamps it with `from: <slot>`.
+//   host → guests: JSON with `to: <slot>` (omit or 0 = every guest), or binary whose first byte is the target slot.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const PORT = +process.env.PORT || 80;
 const ROOT = process.env.STATIC_DIR || path.join(__dirname, 'public');
+const MAX_GUESTS = 3;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -22,6 +26,7 @@ const GZIP = new Set(['.html', '.js', '.webmanifest']);
 const files = new Map();
 (function load(dir) {
   for (const name of fs.readdirSync(dir)) {
+    if (name === 'node_modules' || name.startsWith('.')) continue;
     const f = path.join(dir, name);
     if (fs.statSync(f).isDirectory()) { load(f); continue; }
     const ext = path.extname(name), body = fs.readFileSync(f);
@@ -59,32 +64,53 @@ function newCode() {
   }
   return null;
 }
+function fromHost(r, data, isBinary) {
+  if (isBinary) {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+    const g = r.guests[buf[0]];
+    if (g && g.readyState === 1) g.send(buf.subarray(1), { binary: true });
+    return;
+  }
+  let to = 0;
+  try { to = JSON.parse(data).to | 0; } catch (e) { return; }
+  const text = data.toString();
+  for (let s = 1; s <= MAX_GUESTS; s++) {
+    const g = r.guests[s];
+    if (g && g.readyState === 1 && (!to || to === s)) g.send(text);
+  }
+}
+function fromGuest(r, ws, data, isBinary) {
+  if (isBinary || !r.host || r.host.readyState !== 1) return;
+  let m;
+  try { m = JSON.parse(data); } catch (e) { return; }
+  if (!m || typeof m !== 'object') return;
+  m.from = ws.slot;
+  r.host.send(JSON.stringify(m));
+}
 wss.on('connection', ws => {
   ws.alive = true;
   ws.on('pong', () => { ws.alive = true; });
   ws.on('message', (data, isBinary) => {
     const r = ws.room;
-    if (r) {
-      const peer = r.host === ws ? r.guest : r.host;
-      if (peer && peer.readyState === 1) peer.send(data, { binary: isBinary });
-      return;
-    }
+    if (r) { if (r.host === ws) fromHost(r, data, isBinary); else fromGuest(r, ws, data, isBinary); return; }
     if (isBinary) return;
     let m;
     try { m = JSON.parse(data); } catch (e) { return; }
     if (m.t === 'create') {
       const code = newCode();
       if (!code) { sys(ws, { t: 'err', msg: '방을 만들 수 없어요. 잠시 후 다시 시도하세요' }); return; }
-      const room = { code, host: ws, guest: null };
-      rooms.set(code, room); ws.room = room;
+      const room = { code, host: ws, guests: [null, null, null, null] };
+      rooms.set(code, room); ws.room = room; ws.slot = 0;
       sys(ws, { t: 'created', code });
     } else if (m.t === 'join') {
       const room = rooms.get(String(m.code));
       if (!room) { sys(ws, { t: 'err', msg: '그 코드의 방이 없어요' }); return; }
-      if (room.guest) { sys(ws, { t: 'err', msg: '방이 가득 찼어요' }); return; }
-      room.guest = ws; ws.room = room;
-      sys(ws, { t: 'joined', code: room.code });
-      sys(room.host, { t: 'peer-joined' });
+      let slot = 0;
+      for (let s = 1; s <= MAX_GUESTS; s++) if (!room.guests[s]) { slot = s; break; }
+      if (!slot) { sys(ws, { t: 'err', msg: '방이 가득 찼어요 (최대 4명)' }); return; }
+      room.guests[slot] = ws; ws.room = room; ws.slot = slot;
+      sys(ws, { t: 'joined', code: room.code, slot });
+      sys(room.host, { t: 'peer-joined', slot });
     }
   });
   ws.on('close', () => {
@@ -93,10 +119,10 @@ wss.on('connection', ws => {
     ws.room = null;
     if (r.host === ws) {
       rooms.delete(r.code);
-      if (r.guest) { r.guest.room = null; sys(r.guest, { t: 'peer-left' }); }
-    } else if (r.guest === ws) {
-      r.guest = null;
-      sys(r.host, { t: 'peer-left' });
+      for (const g of r.guests) if (g) { g.room = null; sys(g, { t: 'peer-left', slot: 0 }); }
+    } else if (r.guests[ws.slot] === ws) {
+      r.guests[ws.slot] = null;
+      sys(r.host, { t: 'peer-left', slot: ws.slot });
     }
   });
 });

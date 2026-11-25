@@ -85,6 +85,14 @@ h2{margin:4px 0 10px;text-align:center;font-size:24px;color:#ffe48a;text-shadow:
 .lvtitle{font-size:30px}
 input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;letter-spacing:14px;text-align:center;padding:10px;margin:6px 0;background:#140e1e;color:var(--gold);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line);user-select:text;-webkit-user-select:text;touch-action:manipulation;border-radius:0}
 .code-big{font-size:44px;letter-spacing:10px}
+.stg{display:flex;gap:10px;align-items:center;background:var(--panel2);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 4px 0 #000;padding:8px;margin:8px 0;cursor:pointer}
+.stg:active{transform:translateY(2px)}
+.stg.sel{box-shadow:inset 0 0 0 3px var(--gold),0 4px 0 #000}
+.stg.lock{filter:grayscale(.85) brightness(.6);cursor:default}
+.stg img{width:72px;height:48px;flex:none;image-rendering:pixelated;border:2px solid #000}
+.stg .t{font-weight:700;font-size:15px}
+.stg .d{font-size:12px;color:var(--dim);margin-top:2px;line-height:1.4}
+.stg .no{font-size:11px;color:var(--gold)}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px}
 </style>
 </head>
@@ -102,13 +110,13 @@ input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;
     <div class="dim" style="font-size:12px" id="tBest"></div>
   </div>
   <button class="btn gold" id="bStart">게임 시작</button>
-  <button class="btn" id="bCoop" style="background:#24507a;box-shadow:inset 0 -4px 0 #143252,inset 0 0 0 2px #5aa8ff">함께하기 (2인 온라인)</button>
+  <button class="btn" id="bCoop" style="background:#24507a;box-shadow:inset 0 -4px 0 #143252,inset 0 0 0 2px #5aa8ff">함께하기 (최대 4인 온라인)</button>
   <div class="row">
     <button class="btn" id="bShop">파워업</button>
     <button class="btn" id="bBook">진화 도감</button>
   </div>
   <button class="btn small" id="bSettings">설정</button>
-  <div class="hint">화면 아무 곳이나 드래그해서 이동하세요. 공격은 자동이에요.<br>20분을 버티면 승리! 정예 몬스터의 보물상자로 무기를 진화시키세요.</div>
+  <div class="hint">화면 아무 곳이나 드래그해서 이동하세요. 공격은 자동이에요.<br>15분을 버티면 스테이지 클리어! 클리어하면 다음 스테이지가 열려요.<br>정예 몬스터의 보물상자로 무기를 진화시키세요.</div>
 </div></div>
 
 <div id="chars" class="screen"><div class="wrap">
@@ -117,6 +125,12 @@ input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;
   <div class="panel" id="charInfo"></div>
   <button class="btn gold" id="bGo">출발!</button>
   <button class="btn small" id="bCharBack">뒤로</button>
+</div></div>
+
+<div id="stages" class="screen"><div class="wrap">
+  <h2>스테이지 선택</h2>
+  <div id="stageList"></div>
+  <button class="btn small" id="bStageBack">뒤로</button>
 </div></div>
 
 <div id="shop" class="screen"><div class="wrap">
@@ -146,7 +160,7 @@ input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;
 
 <div id="mp" class="screen"><div class="wrap">
   <h2>함께하기</h2>
-  <div class="hint" style="margin-top:0">각자 폰으로 같은 방에 들어와서 함께 싸워요.<br>캐릭터와 파워업은 각자 자기 것을 써요.</div>
+  <div class="hint" style="margin-top:0">각자 폰으로 같은 방에 들어와서 최대 4명이 함께 싸워요.<br>캐릭터와 파워업은 각자 자기 것을 써요.<br>스테이지는 방장이 열어 둔 곳 중에서 골라요.</div>
   <button class="btn gold" id="bCreate">방 만들기</button>
   <div class="panel">
     <div class="dim center" style="font-size:13px">친구의 방 코드 입력</div>
@@ -164,7 +178,11 @@ input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;
     <div class="big gold-t code-big" id="lCode">----</div>
   </div>
   <div class="panel" id="lPlayers"></div>
-  <button class="btn" id="bLChar">캐릭터 바꾸기</button>
+  <div class="panel center" id="lStage"></div>
+  <div class="row">
+    <button class="btn" id="bLChar">캐릭터 바꾸기</button>
+    <button class="btn" id="bLStage">스테이지 바꾸기</button>
+  </div>
   <button class="btn gold" id="bLStart">시작!</button>
   <div class="hint" id="lHint"></div>
   <button class="btn small" id="bLLeave">방 나가기</button>

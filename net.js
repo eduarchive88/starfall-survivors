@@ -1,19 +1,24 @@
 'use strict';
 // ============================================================
-// online co-op (2 players)
-// The host's phone runs the whole simulation. The guest moves its own hero
+// online co-op (up to 4 players)
+// The host's phone runs the whole simulation. Each guest moves its own hero
 // locally, sends its position, and draws the snapshots the host streams back.
-// server.js only pairs the two phones by a 4-digit room code and relays messages.
+// server.js groups the phones by a 4-digit room code and relays messages:
+// guests are numbered by slot (1-3); the host addresses one with `to`, or all with to = 0.
 // ============================================================
+const MAX_PLAYERS = 4;
 const SNAP_DT = 0.05;
 const PKINDS = ['bolt', 'dagger', 'axe', 'cross', 'scythe', 'orb', 'flask', 'pool'];
 const PICKS = ['coin', 'bag', 'chicken', 'magnet', 'bomb', 'ice', 'chest'];
 const SPINNERS = { axe: 12, cross: 12, scythe: 14, flask: 10 };
 
-function netSend(o) {
+// guest: always goes to the host. host: `to` = guest slot, or 0 for every guest
+function netSend(o, to = 0) {
   const ws = NET.ws;
   if (!ws || ws.readyState !== 1) return;
-  ws.send(o instanceof ArrayBuffer ? o : JSON.stringify(o));
+  if (o instanceof ArrayBuffer) { ws.send(o); return; }
+  if (NET.role === 'host') o.to = to;
+  ws.send(JSON.stringify(o));
 }
 function netConnect(first) {
   netClose();
@@ -38,12 +43,14 @@ function netClose() {
 }
 function netLeave() {
   netClose();
-  NET.role = null; NET.peer = null; NET.code = ''; NET.inGame = false;
+  NET.role = null; NET.peers = {}; NET.roster = []; NET.slot = 0; NET.code = ''; NET.inGame = false;
   NETQ.on = false; NETQ.ev.length = 0;
   hooks.guest = null;
 }
 function mpMsg(t) { $('mpMsg').textContent = t || ''; }
-function remoteP() { return run && run.players.find(p => p.ctrl === 'remote'); }
+function remotes() { return run ? run.players.filter(p => p.ctrl === 'remote' && !p.gone) : []; }
+function remoteBySlot(slot) { return run && run.players.find(p => p.ctrl === 'remote' && p.slot === slot); }
+const peerSlots = () => Object.keys(NET.peers).map(Number).sort((a, b) => a - b);
 function cleanPower(pw) {
   const o = {};
   for (const p of POWERUPS) { const v = pw ? Math.floor(+pw[p.id]) : 0; if (v > 0) o[p.id] = Math.min(p.max, v); }
@@ -67,81 +74,110 @@ on('bJoin', () => {
 });
 $('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('bJoin').click(); });
 
-function playerRow(label, charId, me) {
-  if (!charId) return `<div class="recipe"><div class="ico sm" style="opacity:.3"></div><div class="nm"><b>${label}</b><br><span class="dim">기다리는 중…</span></div></div>`;
+function playerRow(label, charId, me, color) {
+  if (!charId) return `<div class="recipe"><div class="ico sm" style="opacity:.3"></div><div class="nm"><b style="color:${color}">${label}</b><br><span class="dim">빈 자리 · 기다리는 중…</span></div></div>`;
   const c = CHARS.find(x => x.id === charId) || CHARS[0];
-  return `<div class="recipe"><img class="ico sm" src="${charURL(c.id)}" alt=""><div class="nm"><b>${label}</b>${me ? ' <span class="gold-t">(나)</span>' : ''}<br><span class="dim">${c.name} · ${c.title}</span></div><img class="ico sm" src="${weaponIcon(c.weapon)}" alt=""></div>`;
+  return `<div class="recipe"><img class="ico sm" src="${charURL(c.id)}" alt=""><div class="nm"><b style="color:${color}">${label}</b>${me ? ' <span class="gold-t">(나)</span>' : ''}<br><span class="dim">${c.name} · ${c.title}</span></div><img class="ico sm" src="${weaponIcon(c.weapon)}" alt=""></div>`;
 }
+// lobby line-up: [[slot, char], ...] in player order (host first)
+function lineup() {
+  if (NET.role === 'host') return [[0, myChar()], ...peerSlots().filter(s => NET.peers[s].char).map(s => [s, NET.peers[s].char])];
+  return NET.roster.map(([s, c]) => [s, s === NET.slot ? myChar() : c]);
+}
+function lobbyStage() { return clamp(NET.role === 'host' ? save.stage | 0 : NET.stage | 0, 0, STAGES.length - 1); }
+function sendRoster() { if (NET.role === 'host') netSend({ t: 'roster', pl: lineup(), st: lobbyStage() }); }
 function showLobby() {
   if (!NET.ws) { netLeave(); showTitle(); return; }
   state = 'lobby'; run = null;
   NET.inGame = false; NETQ.on = false; hooks.guest = null;
   const host = NET.role === 'host';
+  if (host && !stageUnlocked(save.stage | 0)) save.stage = 0;
   $('lCode').textContent = NET.code;
-  const peerChar = NET.peer && NET.peer.char;
-  $('lPlayers').innerHTML = host
-    ? playerRow('1P', myChar(), true) + playerRow('2P', peerChar, false)
-    : playerRow('1P', peerChar, false) + playerRow('2P', myChar(), true);
+  const L = lineup();
+  let rows = '';
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    const e = L[i];
+    rows += playerRow((i + 1) + 'P' + (i === 0 ? ' · 방장' : ''), e && e[1], e && (host ? e[0] === 0 : e[0] === NET.slot), PCOL[i]);
+  }
+  $('lPlayers').innerHTML = rows;
+  const si = lobbyStage(), S = STAGES[si];
+  $('lStage').innerHTML = `<div class="dim" style="font-size:12px">스테이지</div><div style="font-weight:700;font-size:17px;margin-top:2px">STAGE ${si + 1} · ${S.name}</div><div class="dim" style="font-size:12px;margin-top:2px">${S.desc}</div>`;
+  $('bLStage').style.display = host ? 'block' : 'none';
   $('bLStart').style.display = host ? 'block' : 'none';
-  $('bLStart').disabled = !NET.peer;
+  const n = L.length;
+  $('bLStart').disabled = n < 2;
+  $('bLStart').textContent = n >= 2 ? `${n}명이서 시작!` : '시작!';
   $('lHint').innerHTML = host
-    ? (NET.peer ? '준비 완료! 시작을 누르세요.' : '친구에게 방 코드를 알려주세요.<br>친구는 [함께하기 → 참가하기]에서 코드를 입력하면 돼요.')
-    : (NET.peer ? '방장이 시작하길 기다리는 중…' : '방장 정보를 받는 중…');
+    ? (n >= 2 ? `준비 완료! (${n}/${MAX_PLAYERS}명) 더 기다리거나 시작을 누르세요.` : '친구에게 방 코드를 알려주세요. 최대 4명까지 들어올 수 있어요.<br>친구는 [함께하기 → 참가하기]에서 코드를 입력하면 돼요.')
+    : (n >= 2 ? `방장이 시작하길 기다리는 중… (${n}/${MAX_PLAYERS}명)` : '방장 정보를 받는 중…');
   show('lobby');
 }
 on('bLChar', () => {
-  charPickMode = id => { if (id) sendMe(); showLobby(); };
+  charPickMode = id => { if (id) { sendMe(); sendRoster(); } showLobby(); };
   selChar = myChar();
   showChars();
 });
+on('bLStage', () => {
+  if (NET.role !== 'host') return;
+  showStages(si => { if (si !== null) sendRoster(); showLobby(); });
+});
 on('bLLeave', () => { netLeave(); showMp(); });
 on('bLStart', () => {
-  if (NET.role !== 'host' || !NET.peer) return;
-  const list = [
-    { char: myChar(), power: save.power, ctrl: 'local' },
-    { char: NET.peer.char, power: NET.peer.power, ctrl: 'remote' },
-  ];
-  netSend({ t: 'start', chars: [list[0].char, list[1].char] });
-  startRun(list);
-  const G = remoteP();
-  G.vw = NET.peer.vw; G.vh = NET.peer.vh; G.tx = G.x; G.ty = G.y;
+  if (NET.role !== 'host') return;
+  const slots = peerSlots().filter(s => NET.peers[s].char);
+  if (!slots.length) return;
+  const si = lobbyStage();
+  const list = [{ char: myChar(), power: save.power, ctrl: 'local', slot: 0 }]
+    .concat(slots.map(s => ({ char: NET.peers[s].char, power: NET.peers[s].power, ctrl: 'remote', slot: s })));
+  const chars = list.map(o => o.char);
+  list.forEach((o, i) => { if (i) netSend({ t: 'start', chars, me: i, st: si }, o.slot); });
+  startRun(list, si);
+  for (const G of remotes()) {
+    const pr = NET.peers[G.slot];
+    G.vw = pr.vw; G.vh = pr.vh; G.tx = G.x; G.ty = G.y;
+  }
   NET.inGame = true; NETQ.on = true; NETQ.ev.length = 0;
   NET.snapT = 0; NET.invT = 0;
-  sendInv(G);
+  for (const G of remotes()) sendInv(G);
 });
 
 // ============================================================
 // messages
 // ============================================================
 function onDrop() {
-  if (NET.role === 'host' && NET.inGame && run) { partnerGone(); return; }
+  if (NET.role === 'host' && NET.inGame && run) { for (const G of remotes()) partnerGone(G.slot); NET.role = null; return; }
   if (NET.role === 'guest' && run && state !== 'result') { gameOver('연결이 끊겼어요'); hooks.guest = null; return; }
   if (state === 'lobby' || state === 'mp') { const r = NET.role; netLeave(); showMp(); mpMsg(r ? '연결이 끊겼어요' : '서버에 연결할 수 없어요'); }
 }
-function partnerGone() {
-  const G = remoteP();
+function partnerGone(slot) {
+  const G = remoteBySlot(slot);
   if (G && !G.gone) {
     G.gone = true; G.down = true; G.busy = null;
-    banner('동료가 게임을 떠났어요. 혼자 계속해요!', '#ff8090', 3);
+    const left = remotes().length;
+    banner(left ? `${G.idx + 1}P가 게임을 떠났어요` : '동료가 모두 떠났어요. 혼자 계속해요!', '#ff8090', 3);
   }
-  NETQ.on = false;
+  if (!remotes().length) NETQ.on = false;
 }
 function onMsg(m) {
   switch (m.t) {
     // --- from the relay server
-    case 'created': NET.role = 'host'; NET.code = m.code; NET.peer = null; showLobby(); break;
-    case 'joined': NET.role = 'guest'; NET.code = m.code; NET.peer = null; sendMe(); showLobby(); break;
+    case 'created': NET.role = 'host'; NET.code = m.code; NET.peers = {}; showLobby(); break;
+    case 'joined': NET.role = 'guest'; NET.code = m.code; NET.slot = m.slot | 0; NET.roster = []; sendMe(); showLobby(); break;
     case 'err': netLeave(); showMp(); mpMsg(m.msg); break;
-    case 'peer-joined':
-      if (NET.inGame || state === 'play' || state === 'levelup' || state === 'chest' || state === 'pause') { netSend({ t: 'busy' }); break; }
-      sendMe();
+    case 'peer-joined': {
+      if (NET.role !== 'host') break;
+      const slot = m.slot | 0;
+      if (NET.inGame || state === 'play' || state === 'levelup' || state === 'chest' || state === 'pause') { netSend({ t: 'busy' }, slot); break; }
+      NET.peers[slot] = { char: null };
       break;
+    }
     case 'peer-left':
-      NET.peer = null;
       if (NET.role === 'host') {
-        if (NET.inGame) partnerGone();
-        else if (state === 'lobby') showLobby();
+        delete NET.peers[m.slot | 0];
+        if (NET.inGame) partnerGone(m.slot | 0);
+        else { sendRoster(); if (state === 'lobby') showLobby(); }
       } else {
+        if (m.slot) break; // another guest; the host sends a fresh roster
         const playing = run && state !== 'result';
         netLeave();
         if (playing) { NET.role = null; gameOver('방장과 연결이 끊겼어요'); }
@@ -149,9 +185,19 @@ function onMsg(m) {
       }
       break;
     // --- from the partner
-    case 'me':
-      if (!CHARS.some(c => c.id === m.char)) break;
-      NET.peer = { char: m.char, power: cleanPower(m.power), vw: clamp(+m.vw || 200, 100, 600), vh: clamp(+m.vh || 300, 100, 900) };
+    case 'me': {
+      if (NET.role !== 'host' || !CHARS.some(c => c.id === m.char)) break;
+      const slot = m.from | 0;
+      if (!slot || !NET.peers[slot]) break;
+      NET.peers[slot] = { char: m.char, power: cleanPower(m.power), vw: clamp(+m.vw || 200, 100, 600), vh: clamp(+m.vh || 300, 100, 900) };
+      sendRoster();
+      if (state === 'lobby') showLobby();
+      break;
+    }
+    case 'roster':
+      if (NET.role !== 'guest' || !Array.isArray(m.pl)) break;
+      NET.roster = m.pl.filter(a => Array.isArray(a) && CHARS.some(c => c.id === a[1])).slice(0, MAX_PLAYERS).map(a => [a[0] | 0, a[1]]);
+      NET.stage = clamp(m.st | 0, 0, STAGES.length - 1);
       if (state === 'lobby') showLobby();
       break;
     case 'busy': netLeave(); showMp(); mpMsg('이미 게임이 진행 중인 방이에요'); break;
@@ -164,7 +210,7 @@ function onMsg(m) {
 // host side
 // ============================================================
 function hostMsg(m) {
-  const G = remoteP();
+  const G = remoteBySlot(m.from | 0);
   if (!G || G.gone || !NET.inGame) return;
   switch (m.t) {
     case 'in':
@@ -199,33 +245,33 @@ function hostMsg(m) {
       if (m.on && !G.busy) G.busy = 'pause';
       else if (!m.on && G.busy === 'pause') G.busy = null;
       break;
-    case 'quit': partnerGone(); break;
+    case 'quit': partnerGone(G.slot); break;
   }
 }
 function remoteLevel(G, quiet) {
   use(G); G.choices = rollChoices(); use(run.me);
   G.busy = 'lv';
-  netSend({ t: 'lv', ch: G.choices, rr: G.rerolls, sk: G.skips, q: quiet ? 1 : 0 });
+  netSend({ t: 'lv', ch: G.choices, rr: G.rerolls, sk: G.skips, q: quiet ? 1 : 0 }, G.slot);
 }
 // called by openChest when the partner opened it
 function netChest(G, items, count, g) {
   G.busy = 'chest';
   sendInv(G);
-  netSend({ t: 'chest', items, count, g });
+  netSend({ t: 'chest', items, count, g }, G.slot);
 }
 function sendInv(G) {
   if (!G) return;
   const dmg = {};
   for (const k in G.dmgBy) dmg[k] = Math.round(G.dmgBy[k]);
-  netSend({ t: 'inv', w: G.weapons.map(w => [w.id, w.lvl, w.evo ? 1 : 0]), ps: G.passives, po: G.passiveOrder, st: G.st, rr: G.rerolls, sk: G.skips, dmg });
+  netSend({ t: 'inv', w: G.weapons.map(w => [w.id, w.lvl, w.evo ? 1 : 0]), ps: G.passives, po: G.passiveOrder, st: G.st, rr: G.rerolls, sk: G.skips, dmg }, G.slot);
 }
 function netGameOver() {
-  const R = run, G = remoteP();
-  if (G && !G.gone) {
+  const R = run;
+  for (const G of remotes()) {
     const dmg = {};
     for (const k in G.dmgBy) dmg[k] = Math.round(G.dmgBy[k]);
     sendInv(G);
-    netSend({ t: 'over', time: R.t, gold: R.gold, kills: R.kills, lv: R.level, cl: R.cleared ? 1 : 0, dmg });
+    netSend({ t: 'over', time: R.t, gold: R.gold, kills: R.kills, lv: R.level, cl: R.cleared ? 1 : 0, dmg }, G.slot);
   }
   NET.inGame = false; NETQ.on = false;
 }
@@ -238,7 +284,8 @@ function encodeSnap(G) {
   const near = (x, y) => Math.abs(x - G.x) < bx && Math.abs(y - G.y) < by;
   const ev = [];
   let nn = 0, nk = 0;
-  for (const e of NETQ.ev) {
+  for (let e of NETQ.ev) {
+    if (e[0] === '@') { if (e[1] !== G.slot) continue; e = e[2]; }
     if (e[0] === 'n') { if (nn < 50 && near(e[1], e[2])) { ev.push(e); nn++; } }
     else if (e[0] === 'k') { if (nk < 40 && near(e[1], e[2])) { ev.push(e); nk++; } }
     else if (e[0] === 'f') {
@@ -246,11 +293,13 @@ function encodeSnap(G) {
       if (near(f.x, f.y)) ev.push(['f', f.kind === 'slash' ? { kind: 'slash', x: r1(f.x), y: r1(f.y), w: r1(f.w), h: r1(f.h), side: f.side, life: f.life, evo: f.evo ? 1 : 0 } : { kind: f.kind, x: r1(f.x), y: r1(f.y), r: r1(f.r), life: f.life, evo: f.evo ? 1 : 0 }]);
     } else ev.push(e);
   }
-  const holding = R.players.some(p => p.ctrl === 'remote' && !p.gone && p.busy);
+  // who (if anyone) is holding the game: the host's own menu, or another guest's level-up / chest / pause
+  const busy = R.players.find(p => p.ctrl === 'remote' && !p.gone && p.busy);
+  const hold = state !== 'play' ? [state, 0] : busy && busy !== G ? [busy.busy === 'lv' ? 'levelup' : busy.busy, busy.idx] : 0;
   const b = R.bossBar && !R.bossBar.dead ? R.bossBar : null;
   const head = {
     t: R.t, k: R.kills, g: R.gold, lv: R.level, xp: Math.floor(R.xp), xn: R.xpNext, fz: r1(R.freezeT), fl: r1(R.flashT), cl: R.cleared ? 1 : 0,
-    run: state === 'play' && !holding ? 1 : 0, hold: state === 'play' ? 0 : state,
+    run: state === 'play' && !busy ? 1 : 0, hold,
     boss: b ? [b.name, Math.round(b.hp), Math.round(b.maxHp)] : 0,
     pl: R.players.map(p => [r1(p.x), r1(p.y), r1(Math.max(0, p.hp)), p.st.maxHp, p.faceX, p.moving ? 1 : 0, p.hurtT > 0 ? 1 : 0, p.inv > 0 ? 1 : 0,
       p.down ? 1 : 0, r1(p.revP), r1(p.downT), r1(p.auraR), p.auraEvo ? 1 : 0, p.gone ? 1 : 0]),
@@ -262,11 +311,13 @@ function encodeSnap(G) {
   const es = R.enemies.filter(e => !e.dead && near(e.x, e.y));
   const gs = R.gems.filter(g => near(g.x, g.y)).slice(0, 400);
   const ps = R.projs.filter(p => !p.dead && near(p.x, p.y)).slice(0, 500);
-  const buf = new ArrayBuffer(4 + hb.length + 6 + es.length * 12 + gs.length * 9 + ps.length * 16);
+  // byte 0 = target slot (stripped by the relay)
+  const buf = new ArrayBuffer(1 + 4 + hb.length + 6 + es.length * 12 + gs.length * 9 + ps.length * 16);
   const dv = new DataView(buf);
-  dv.setUint32(0, hb.length);
-  new Uint8Array(buf, 4, hb.length).set(hb);
-  let o = 4 + hb.length;
+  dv.setUint8(0, G.slot);
+  dv.setUint32(1, hb.length);
+  new Uint8Array(buf, 5, hb.length).set(hb);
+  let o = 5 + hb.length;
   dv.setUint16(o, es.length); o += 2;
   for (const e of es) {
     dv.setUint16(o, e.id & 0xffff); dv.setUint8(o + 2, ENEMY_IDX[e.type]);
@@ -293,34 +344,36 @@ function encodeSnap(G) {
   return buf;
 }
 function hostTick(dt) {
-  const R = run, G = remoteP();
-  if (!R || !NET.inGame || !G || G.gone) return;
+  const R = run, gs = remotes();
+  if (!R || !NET.inGame || !gs.length) return;
   if (state !== 'result' && !R.cleared) {
-    if (!G.busy && G.pending > 0) remoteLevel(G);
+    for (const G of gs) if (!G.busy && G.pending > 0) remoteLevel(G);
   }
   NET.snapT += dt;
   if (NET.snapT >= SNAP_DT) {
     NET.snapT = 0;
-    netSend(encodeSnap(G));
+    for (const G of gs) netSend(encodeSnap(G));
     NETQ.ev.length = 0;
     sfxSent.clear();
   }
   NET.invT += dt;
-  if (NET.invT > 2) { NET.invT = 0; sendInv(G); }
+  if (NET.invT > 2) { NET.invT = 0; for (const G of gs) sendInv(G); }
 }
 
 // ============================================================
 // guest side
 // ============================================================
-function guestRun(chars) {
+function guestRun(chars, me, si) {
   eid = 0;
+  GROUND = makeGround(si);
   run = {
+    si, S: STAGES[si],
     t: 0, kills: 0, gold: 0, level: 1, xp: 0, xpNext: 5,
-    players: chars.map((c, i) => makePlayer(i, c, {}, i === 1 ? 'local' : 'remote')),
+    players: chars.map((c, i) => makePlayer(i, c, {}, i === me ? 'local' : 'remote')),
     enemies: [], projs: [], gems: [], pickups: [], props: [], parts: [], nums: [], fx: [], timers: [],
     freezeT: 0, flashT: 0, shake: 0, banner: null, cleared: false, bossBar: null,
   };
-  run.me = run.players[1];
+  run.me = run.players[me];
   for (const p of run.players) {
     const ch = p.char;
     p.st = { maxHp: ch.hp, move: 72 * (1 + (ch.bonus.move || 0)), greed: 1, might: 1, armor: 0, recovery: 0, cooldown: 1, area: 1, speed: 1, duration: 1, amount: 0, luck: 1, growth: 1, magnet: 40 };
@@ -334,8 +387,9 @@ function guestRun(chars) {
 function guestMsg(m) {
   switch (m.t) {
     case 'start':
-      if (!Array.isArray(m.chars) || m.chars.length !== 2) break;
-      guestRun(m.chars);
+      if (!Array.isArray(m.chars) || m.chars.length < 2 || m.chars.length > MAX_PLAYERS) break;
+      if (!(m.me >= 1 && m.me < m.chars.length)) break;
+      guestRun(m.chars, m.me | 0, clamp(m.st | 0, 0, STAGES.length - 1));
       NET.inGame = true;
       hooks.guest = guestUpdate;
       state = 'play'; input.active = false;
@@ -514,16 +568,19 @@ hooks.tick = dt => { if (NET.role === 'host') hostTick(dt); };
 hooks.holdText = () => {
   if (!NET.role || !run || state !== 'play') return '';
   if (NET.role === 'host') {
-    const G = remoteP();
-    if (!NET.inGame || !G || G.gone || !G.busy) return '';
-    return G.busy === 'lv' ? '동료가 레벨업 보상을 고르는 중…' : G.busy === 'chest' ? '동료가 보물상자를 여는 중…' : '동료가 일시정지했어요';
+    const G = NET.inGame && remotes().find(p => p.busy);
+    return G ? holdLine(G.busy === 'lv' ? 'levelup' : G.busy, G.idx) : '';
   }
   if (!NET.inGame) return '';
   if (performance.now() - NET.lastSnap > 1500) return '연결 대기 중…';
   if (NET.hostRun) return '';
   const h = NET.hostHold;
-  return h === 'levelup' ? '동료가 레벨업 보상을 고르는 중…' : h === 'chest' ? '동료가 보물상자를 여는 중…' : h === 'pause' ? '동료가 일시정지했어요' : '';
+  return Array.isArray(h) ? holdLine(h[0], h[1] | 0) : '';
 };
+function holdLine(kind, idx) {
+  const who = `${idx + 1}P`;
+  return kind === 'levelup' ? `${who}가 레벨업 보상을 고르는 중…` : kind === 'chest' ? `${who}가 보물상자를 여는 중…` : kind === 'pause' ? `${who}가 일시정지했어요` : '';
+}
 
 // sounds: on the host, personal sounds (gems, coins, hurt…) only play for whoever triggered them;
 // everything else is also forwarded to the guest
@@ -533,8 +590,11 @@ for (const k of Object.keys(sfx)) {
   const f = sfx[k];
   sfx[k] = () => {
     if (NETQ.on && run && run.players) {
-      const mine = run.player === run.me, personal = PERSONAL_SFX.has(k);
-      if (k !== 'click' && (!personal || !mine) && !sfxSent.has(k)) { sfxSent.add(k); netEv(['s', k]); }
+      const P = run.player, mine = P === run.me, personal = PERSONAL_SFX.has(k);
+      if (k !== 'click') {
+        if (!personal) { if (!sfxSent.has(k)) { sfxSent.add(k); netEv(['s', k]); } }
+        else if (!mine && P.ctrl === 'remote') { const key = k + P.slot; if (!sfxSent.has(key)) { sfxSent.add(key); netEv(['@', P.slot, ['s', k]]); } }
+      }
       if (personal && !mine) return;
     }
     f();

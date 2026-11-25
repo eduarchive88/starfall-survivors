@@ -21,7 +21,7 @@ function iconByName(name) {
 }
 function charURL(id) { return sprURL(CHAR_SPR[id][0], 'c' + id); }
 
-const screens = ['title', 'chars', 'shop', 'book', 'settings', 'levelup', 'chest', 'pause', 'result', 'mp', 'lobby'];
+const screens = ['title', 'chars', 'stages', 'shop', 'book', 'settings', 'levelup', 'chest', 'pause', 'result', 'mp', 'lobby'];
 function show(id) {
   for (const s of screens) $(s).classList.toggle('on', s === id);
   $('pauseBtn').style.display = state === 'play' && !id ? 'block' : 'none';
@@ -38,6 +38,7 @@ function bestText() {
 function showTitle() {
   state = 'title';
   run = null;
+  GROUND = makeGround(save.stage | 0);
   $('tGold').textContent = Math.floor(save.gold);
   $('tBest').textContent = bestText();
   show('title');
@@ -85,15 +86,57 @@ on('bGo', () => {
   }
   save.lastChar = c.id; persist();
   if (charPickMode) { const f = charPickMode; charPickMode = null; f(c.id); return; }
-  startRun(c.id);
+  showStages(si => { if (si === null) showChars(); else startRun(c.id, si); });
 });
-function startRun(id) {
-  newRun(typeof id === 'string' ? [{ char: id, power: save.power, ctrl: 'local' }] : id);
+function startRun(id, si = save.stage) {
+  newRun(typeof id === 'string' ? [{ char: id, power: save.power, ctrl: 'local' }] : id, si);
   state = 'play';
   input.active = false;
   show(null);
   audio();
 }
+
+// ============================================================
+// stage select
+// ============================================================
+let stagePick = null; // callback(stageIndex | null)
+function stageThumb(i) {
+  const key = 'stg' + i;
+  if (urlCache[key]) return urlCache[key];
+  const S = STAGES[i], c = makeCanvas(72, 48), x = c.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  x.drawImage(makeGround(i), 100, 100, 72, 48, 0, 0, 72, 48);
+  const boss = ENEMIES[S.bosses[2][0]], sp = SPR[boss.spr][0];
+  x.drawImage(sp.c, 36 - sp.w, 24 - sp.h, sp.w * 2, sp.h * 2);
+  const mob = ENEMIES[S.classic ? 'bat' : S.pool[0]], ms = SPR[mob.spr][0];
+  x.drawImage(ms.c, 6, 30 - ms.h / 2); x.drawImage(ms.c, 72 - ms.w - 6, 14 - ms.h / 2);
+  return (urlCache[key] = c.toDataURL());
+}
+function showStages(cb) {
+  stagePick = cb;
+  if (!stageUnlocked(save.stage | 0)) save.stage = 0;
+  const box = $('stageList');
+  box.innerHTML = STAGES.map((S, i) => {
+    const open = stageUnlocked(i), rec = save.stages[i] || {};
+    const status = !open ? '🔒 이전 스테이지를 클리어하면 열려요' : rec.clear ? `<span class="gold-t">★ 클리어</span> · 최고 ${fmtTime(rec.best || 0)}` : rec.best ? `최고 ${fmtTime(rec.best)}` : '도전 가능!';
+    return `<div class="stg${open ? '' : ' lock'}${i === (save.stage | 0) ? ' sel' : ''}" data-i="${i}">
+      <img src="${stageThumb(i)}" alt="">
+      <div style="flex:1"><div class="no">STAGE ${i + 1} · 보상 ×${stageGoldMul(i).toFixed(1)}</div><div class="t">${S.name}</div><div class="d">${open ? S.desc : '???'}</div><div class="d">${status}</div></div></div>`;
+  }).join('');
+  [...box.children].forEach(el => el.onclick = () => {
+    const i = +el.dataset.i;
+    if (!stageUnlocked(i)) return;
+    sfx.click();
+    save.stage = i; persist();
+    const f = stagePick; stagePick = null;
+    if (f) f(i);
+  });
+  show('stages');
+  const sel = box.querySelector('.sel');
+  if (sel) sel.scrollIntoView({ block: 'center' });
+}
+on('bStageBack', () => { const f = stagePick; stagePick = null; if (f) f(null); else showTitle(); });
+function stageGoldMul(i) { return 1 + i * 0.3; }
 
 // ============================================================
 // shop
@@ -390,32 +433,41 @@ function gameOver(note) {
   input.active = false;
   use(me);
   if (NET.role === 'host') netGameOver();
-  const bonus = Math.floor(R.t / 60) * 10 * st.greed;
-  const gold = R.gold * st.greed;
+  const mul = stageGoldMul(R.si);
+  const bonus = Math.floor(R.t / 60) * 10 * st.greed * mul;
+  const gold = R.gold * st.greed * mul;
   const earned = Math.floor(gold + bonus);
   save.gold += earned;
   save.runs++; save.kills += R.kills;
   const id = R.char.id;
   save.best[id] = Math.max(save.best[id] || 0, Math.floor(R.t));
   if (R.cleared) save.clears[id] = true;
+  const rec = save.stages[R.si] || (save.stages[R.si] = {});
+  rec.best = Math.max(rec.best || 0, Math.floor(R.t));
+  const newly = R.cleared && !rec.clear;
+  if (R.cleared) rec.clear = true;
+  const next = STAGES[R.si + 1];
+  if (newly && next) save.stage = R.si + 1;
   persist();
   if (SIM) return;
-  $('rTitle').textContent = note || (R.cleared ? '★ 생존 성공! ★' : '쓰러졌다…');
+  $('rTitle').textContent = note || (R.cleared ? `★ ${R.S.name} 클리어! ★` : '쓰러졌다…');
   $('rTitle').style.color = R.cleared ? '#ffd040' : '#ff8090';
   $('rStats').innerHTML = [
-    ['캐릭터', R.char.name], ['생존 시간', fmtTime(R.t)], ['레벨', R.level], ['처치', R.kills],
+    ['스테이지', `${R.si + 1}. ${R.S.name}`], ['캐릭터', R.char.name], ['생존 시간', fmtTime(R.t)], ['레벨', R.level], ['처치', R.kills],
     ['획득 골드', `<span class="gold-t">● ${Math.floor(gold)}</span>`], ['생존 보너스', `<span class="gold-t">● ${Math.floor(bonus)}</span>`],
     ['합계', `<span class="gold-t">● ${earned}</span>`],
-  ].map(([a, b]) => `<div class="stat"><span class="dim">${a}</span><b>${b}</b></div>`).join('');
+  ].map(([a, b]) => `<div class="stat"><span class="dim">${a}</span><b>${b}</b></div>`).join('')
+    + (newly && next ? `<div class="center gold-t" style="margin-top:8px;font-weight:700">🔓 새 스테이지 열림: STAGE ${R.si + 2} ${next.name}</div>` : newly ? '<div class="center gold-t" style="margin-top:8px;font-weight:700">👑 모든 스테이지를 정복했어요!</div>' : '');
   const rows = R.weapons.map(w => ({ w, d: me.dmgBy[w.id] || 0 })).sort((a, b) => b.d - a.d);
   $('rDmg').innerHTML = '<div class="dim center" style="font-size:12px;margin-bottom:4px">무기별 피해량</div>' + rows.map(({ w, d }) =>
     `<div class="recipe"><img class="ico sm" src="${weaponIcon(w.id, w.evo)}" alt=""><div class="nm"><b>${weaponName(w)}</b> <span class="dim">Lv${w.lvl}</span></div><b>${Math.round(d).toLocaleString()}</b></div>`).join('');
-  $('bAgain').textContent = NET.role ? '방으로' : '다시 하기';
+  R.nextSi = !NET.role && R.cleared && next ? R.si + 1 : R.si;
+  $('bAgain').textContent = NET.role ? '방으로' : R.nextSi !== R.si ? '다음 스테이지' : '다시 하기';
   $('bMenu').textContent = NET.role ? '방 나가기' : '메인으로';
   show('result');
   sfx.boss();
 }
-on('bAgain', () => { if (NET.role) showLobby(); else startRun(run.char.id); });
+on('bAgain', () => { if (NET.role) showLobby(); else startRun(run.char.id, run.nextSi); });
 on('bMenu', () => { if (NET.role) netLeave(); showTitle(); });
 
 // ============================================================
@@ -490,22 +542,22 @@ function simBot(P = run.me) {
   if (P === run.me) input.bot = [fx / l, fy / l];
   else P.bot = [fx / l, fy / l];
 }
-function runSim(charId, powered, duo) {
+function runSim(charId, powered, duo, si = 0) {
   const saved = save;
   save = loadSave(); save.sound = false;
-  if (powered) for (const p of POWERUPS) save.power[p.id] = Math.min(p.max, 2);
+  if (powered) for (const p of POWERUPS) save.power[p.id] = Math.min(p.max, powered === true ? 2 : powered);
   const list = [{ char: charId, power: save.power, ctrl: 'local' }];
-  if (duo) list.push({ char: duo, power: save.power, ctrl: 'bot' });
-  newRun(list);
+  if (duo) for (const d of duo.split(',')) list.push({ char: d, power: save.power, ctrl: 'bot' });
+  newRun(list, si);
   state = 'play';
   let steps = 0, nextSnap = 60;
   const dt = 1 / 30, snaps = [];
-  while (state === 'play' && run.t < RUN_END + 30 && steps < 30 * 60 * 25) {
+  while (state === 'play' && run.t < STAGE_LEN + 30 && steps < 30 * 60 * 25) {
     for (const p of run.players) if (p.ctrl !== 'remote') simBot(p);
     update(dt); if (run.me.pending) simPick(); steps++;
     if (run.t >= nextSnap) { nextSnap += 60; snaps.push(`${Math.round(run.t / 60)}m L${run.level} k${run.kills} e${run.enemies.length} dmgIn${Math.round(run.taken || 0)}`); }
   }
-  const out = { char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
+  const out = { stage: si + 1, char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
   save = saved;
   input.bot = null;
   return out;
@@ -522,7 +574,9 @@ if (SIM) {
   window.SIM_VAC = qs.get('vac') === '1';
   const res = [];
   const duo = qs.get('duo');
-  for (const c of chars) { res.push(runSim(c, false, duo)); res.push(runSim(c, true, duo)); }
+  const stages = (qs.get('stages') || '1').split(',').map(n => (+n || 1) - 1);
+  const pws = (qs.get('pw') || '0,2').split(',').map(Number);
+  for (const si of stages) for (const c of chars) for (const pw of pws) res.push(runSim(c, pw, duo, si));
   const pre = document.createElement('pre');
   pre.id = 'simout';
   pre.textContent = JSON.stringify(res);
@@ -534,8 +588,8 @@ if (SIM) {
   if (qs.get('shot')) {
     // debug: fast-forward a bot run to inspect visuals (?shot=char&t=secs&ui=levelup|pause|chest|result)
     const list = [{ char: qs.get('shot'), power: save.power, ctrl: 'local' }];
-    if (qs.get('duo')) list.push({ char: qs.get('duo'), power: save.power, ctrl: 'bot' });
-    newRun(list); state = 'play'; show(null);
+    if (qs.get('duo')) for (const d of qs.get('duo').split(',')) list.push({ char: d, power: save.power, ctrl: 'bot' });
+    newRun(list, (+qs.get('stage') || 1) - 1); state = 'play'; show(null);
     const until = +qs.get('t') || 60;
     while (run.t < until && state !== 'result') {
       for (const p of run.players) simBot(p);

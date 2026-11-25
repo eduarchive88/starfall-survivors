@@ -18,10 +18,14 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// ground texture (tiles seamlessly; decorations kept away from edges)
-const GROUND = (() => {
-  const N = 512, c = makeCanvas(N, N), x = c.getContext('2d'), rnd = mulberry32(1337);
-  x.fillStyle = '#263a26'; x.fillRect(0, 0, N, N);
+// ground texture per stage (tiles seamlessly; decorations kept away from edges)
+const groundCache = {};
+function makeGround(si) {
+  if (groundCache[si]) return groundCache[si];
+  const G = STAGES[si].ground;
+  const N = 512, c = makeCanvas(N, N), x = c.getContext('2d'), rnd = mulberry32(1337 + si * 101);
+  const rp = a => a[(rnd() * a.length) | 0];
+  x.fillStyle = G.base; x.fillRect(0, 0, N, N);
   const blob = (cx, cy, rad, col) => {
     x.fillStyle = col;
     for (let i = 0; i < rad * rad * 1.6; i++) {
@@ -30,26 +34,31 @@ const GROUND = (() => {
       x.fillRect(((px % N) + N) % N, ((py % N) + N) % N, 2, 2);
     }
   };
-  for (let i = 0; i < 26; i++) blob(rnd() * N, rnd() * N, 14 + rnd() * 22, pick(['#2a422a', '#223522', '#2d472b']));
-  for (let i = 0; i < 9; i++) blob(rnd() * N, rnd() * N, 10 + rnd() * 16, '#36301f');
-  for (let i = 0; i < 2600; i++) { x.fillStyle = pick(['#2e462c', '#20321f', '#304b2e', '#29402a']); x.fillRect((rnd() * N) | 0, (rnd() * N) | 0, 1, 1); }
+  for (let i = 0; i < 26; i++) blob(rnd() * N, rnd() * N, 14 + rnd() * 22, rp(G.blobs));
+  for (let i = 0; i < 9; i++) blob(rnd() * N, rnd() * N, 10 + rnd() * 16, G.dirt);
+  if (G.tiles) {
+    // flagstones
+    x.fillStyle = G.tiles;
+    for (let y = 0; y < N; y += 32) { x.fillRect(0, y, N, 1); for (let xx = (y / 32) % 2 ? 16 : 0; xx < N; xx += 32) x.fillRect(xx, y, 1, 32); }
+  }
+  for (let i = 0; i < 2600; i++) { x.fillStyle = rp(G.dots); x.fillRect((rnd() * N) | 0, (rnd() * N) | 0, 1, 1); }
   for (let i = 0; i < 420; i++) {
     const px = (rnd() * N) | 0, py = (rnd() * N) | 0;
-    x.fillStyle = '#3d5e37'; x.fillRect(px, py, 1, 2); x.fillRect(px + 2, py - 1, 1, 3); x.fillRect(px + 4, py, 1, 2);
+    x.fillStyle = G.tuft; x.fillRect(px, py, 1, 2); x.fillRect(px + 2, py - 1, 1, 3); x.fillRect(px + 4, py, 1, 2);
   }
   for (let i = 0; i < 90; i++) {
     const px = (rnd() * N) | 0, py = (rnd() * N) | 0;
-    x.fillStyle = pick(['#e8dc78', '#d8789a', '#9ac8f0', '#f0f0f0']); x.fillRect(px, py, 1, 1);
-    x.fillStyle = '#2f4f2c'; x.fillRect(px, py + 1, 1, 1);
+    x.fillStyle = rp(G.flowers); x.fillRect(px, py, 1, 1);
+    x.fillStyle = G.tuft; x.fillRect(px, py + 1, 1, 1);
   }
   for (let i = 0; i < 70; i++) {
     const px = (rnd() * N) | 0, py = (rnd() * N) | 0;
-    x.fillStyle = '#4a4a50'; x.fillRect(px, py, 3, 2); x.fillStyle = '#6a6a72'; x.fillRect(px, py, 2, 1);
+    x.fillStyle = G.rock[0]; x.fillRect(px, py, 3, 2); x.fillStyle = G.rock[1]; x.fillRect(px, py, 2, 1);
   }
-  for (let i = 0; i < 10; i++) x.drawImage(ITEM.tomb.c, (20 + rnd() * (N - 40)) | 0, (20 + rnd() * (N - 40)) | 0);
-  for (let i = 0; i < 14; i++) x.drawImage(ITEM.bush.c, (20 + rnd() * (N - 40)) | 0, (20 + rnd() * (N - 40)) | 0);
-  return c;
-})();
+  for (const [k, n] of G.deco) for (let i = 0; i < n; i++) x.drawImage(DECO[k].c, (20 + rnd() * (N - 40)) | 0, (20 + rnd() * (N - 40)) | 0);
+  return (groundCache[si] = c);
+}
+let GROUND = makeGround(0);
 
 // ============================================================
 // audio (tiny synth)
@@ -98,7 +107,7 @@ let run = null;
 let st = {};
 // online co-op hooks (filled in by net.js): event queue for the guest + game-loop callbacks
 const NETQ = { on: false, ev: [] };
-const NET = { ws: null, role: null, code: '', peer: null, inGame: false, snapT: 0, invT: 0, inT: 0, lastSnap: 0, hostRun: 0, hostHold: 0, emap: new Map(), pmap: new Map() };
+const NET = { ws: null, role: null, code: '', peers: {}, roster: [], slot: 0, stage: 0, inGame: false, snapT: 0, invT: 0, inT: 0, lastSnap: 0, hostRun: 0, hostHold: 0, emap: new Map(), pmap: new Map() };
 function netEv(e) { if (NETQ.on && NETQ.ev.length < 600) NETQ.ev.push(e); }
 const hooks = { holding: () => false, tick: () => {}, guest: null, holdText: () => '' };
 const netHoldText = () => hooks.holdText();
@@ -106,7 +115,7 @@ const ENEMY_KEYS = Object.keys(ENEMIES), ENEMY_IDX = Object.fromEntries(ENEMY_KE
 let eid = 0, pid = 0;
 
 function xpFor(lv) {
-  const m = run && run.players.length > 1 ? 1.25 : 1;
+  const m = run ? 1 + (run.players.length - 1) * 0.25 : 1;
   if (lv < 20) return (5 + (lv - 1) * 10) * m;
   if (lv < 40) return (195 + (lv - 20) * 13) * m;
   return (455 + (lv - 40) * 20) * m;
@@ -159,12 +168,15 @@ function makePlayer(idx, charId, power, ctrl) {
   };
 }
 // list: [{ char, power, ctrl: 'local' | 'remote' | 'bot' }]
-function newRun(list) {
+function newRun(list, si = 0) {
   if (typeof list === 'string') list = [{ char: list, power: save.power, ctrl: 'local' }];
   eid = 0; pid = 0;
+  si = clamp(si | 0, 0, STAGES.length - 1);
+  GROUND = makeGround(si);
   run = {
+    si, S: STAGES[si], events: stageEvents(STAGES[si]), metT: 4, hazards: [],
     t: 0, kills: 0, gold: 0, level: 1, xp: 0, xpNext: 5,
-    players: list.map((o, i) => makePlayer(i, o.char, o.power, o.ctrl)),
+    players: list.map((o, i) => Object.assign(makePlayer(i, o.char, o.power, o.ctrl), { slot: o.slot || 0 })),
     enemies: [], projs: [], gems: [], pickups: [], props: [], parts: [], nums: [], fx: [], timers: [],
     spawnT: 0.5, eliteT: 90, propT: 2, evIdx: 0, freezeT: 0, flashT: 0, shake: 0, banner: null,
     cleared: false, reaperOn: false, reaperT: 0, bigGem: null, bossBar: null,
@@ -278,12 +290,15 @@ function spawnPos(P = randomAlive()) {
   return [P.x + (Math.random() < 0.5 ? -hw : hw), P.y + rand(-hh, hh)];
 }
 function spawnEnemy(type, o = {}) {
-  const T = ENEMIES[type], m = run.t / 60, n = coopN();
-  const hpMul = (1 + m * 0.08 + Math.max(0, m - 12) * 0.05) * (1 + (n - 1) * 0.3);
+  // stages are 15 minutes long, so time-based growth runs 4/3 faster than the classic 20-minute curve
+  // harder stages ease in: part of their toughness applies from the start, the rest builds up over the stage
+  const T = ENEMIES[type], S = run.S, m = run.t / 60 * 20 / 15, n = coopN(), prog = Math.min(1, run.t / STAGE_LEN);
+  const sHp = 1 + (S.hp - 1) * (0.15 + 0.85 * prog), sDmg = 1 + (S.dmg - 1) * (0.4 + 0.6 * prog);
+  const hpMul = (1 + m * 0.08 + Math.max(0, m - 12) * 0.05) * (1 + (n - 1) * 0.3) * sHp;
   const pos = o.pos || spawnPos(o.near);
   const e = {
-    id: ++eid, type, x: pos[0], y: pos[1], r: T.r, xp: T.xp, kbRes: T.kb,
-    hp: T.hp * hpMul, dmg: T.dmg * (1 + m * 0.03), spd: T.spd * rand(0.9, 1.08),
+    id: ++eid, type, x: pos[0], y: pos[1], r: T.r, xp: T.xp * (1 + run.si * 0.04), kbRes: T.kb,
+    hp: T.hp * hpMul, dmg: T.dmg * (1 + m * 0.03) * sDmg, spd: T.spd * rand(0.9, 1.08),
     sc: 1, flash: 0, kbx: 0, kby: 0, atkT: 0, anim: Math.random() * 2, cd: null,
     spr: SPR[T.spr], alpha: T.alpha || 1, dead: false,
   };
@@ -306,8 +321,8 @@ function spawning(dt) {
     if (R.reaperT <= 0) { R.reaperT = 30; for (const p of alivePlayers()) spawnEnemy('reaper', { near: p }); }
     return;
   }
-  const W = WAVES[Math.min(WAVES.length - 1, (R.t / 60) | 0)];
-  const cap = MAX_ENEMIES + (n - 1) * 100;
+  const W = stageWave(R.S, (R.t / 60) | 0);
+  const cap = MAX_ENEMIES + (n - 1) * 80;
   R.spawnT -= dt;
   if (R.spawnT <= 0) {
     R.spawnT = W.iv;
@@ -345,7 +360,7 @@ function triggerEvent(ev) {
       for (let i = 0; i < ev.n; i++) {
         const a = i / ev.n * TAU;
         const e = spawnEnemy(ev.enemy, { pos: [P.x + Math.cos(a) * rad, P.y + Math.sin(a) * rad] });
-        e.ring = true; e.life = 40;
+        e.ring = true; e.life = 40; e.spd = Math.min(e.spd, 8);
       }
     }
     banner(ev.text);
@@ -358,7 +373,7 @@ function triggerEvent(ev) {
     R.cleared = true; R.reaperOn = true; R.reaperT = 4;
     for (const e of R.enemies) { e.dead = true; e.silent = true; }
     R.flashT = 0.5;
-    banner('20분 생존 성공! 사신이 깨어났다…', '#ffd040', 5);
+    banner(`${R.S.name} 클리어! 사신이 깨어났다…`, '#ffd040', 5);
     sfx.boss();
   }
 }
@@ -367,7 +382,7 @@ function banner(text, color = '#fff0c0', dur = 3) { run.banner = { text, color, 
 function pbanner(text, color = '#fff0c0', dur = 3) { bannerTo(run.player, text, color, dur); }
 function bannerTo(P, text, color = '#fff0c0', dur = 3) {
   if (P === run.me) run.banner = { text, color, t: dur, dur };
-  else if (P.ctrl === 'remote') netEv(['b', text, color, dur]);
+  else if (P.ctrl === 'remote') netEv(['@', P.slot, ['b', text, color, dur]]);
 }
 
 // ============================================================
@@ -736,6 +751,40 @@ function steer(P, mx, my, dt) {
   }
 }
 
+// stage hazard: falling meteors (volcano, abyss) — a warning circle, then an explosion that hurts heroes and monsters alike
+function updateHazards(dt) {
+  const R = run, M = R.S.meteor;
+  if (!M || R.cleared) return;
+  R.metT -= dt;
+  if (R.metT <= 0) {
+    R.metT = M.iv * rand(0.8, 1.2);
+    for (const P of alivePlayers()) {
+      const n = 1 + (R.t > 300 ? 1 : 0) + (R.t > 600 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        const a = rand(0, TAU), d = i === 0 ? rand(0, 40) : rand(30, 110);
+        const h = { x: P.x + Math.cos(a) * d, y: P.y + Math.sin(a) * d, r: M.r, t: 1.4 };
+        R.hazards.push(h);
+        addFx({ kind: 'warn', x: h.x, y: h.y, r: h.r, life: h.t });
+      }
+    }
+  }
+  for (const h of R.hazards) {
+    if ((h.t -= dt) > 0) continue;
+    h.done = true;
+    addFx({ kind: 'meteor', x: h.x, y: h.y, r: h.r, life: 0.45 });
+    sfx.boom();
+    for (const P of alivePlayers()) {
+      if ((P.x - h.x) ** 2 + (P.y - h.y) ** 2 > (h.r + P.r) ** 2) continue;
+      use(P); hurtPlayer(M.dmg * (1 + R.t / 900));
+    }
+    use(R.me);
+    forNear(h.x, h.y, h.r + 8, e => {
+      if ((e.x - h.x) ** 2 + (e.y - h.y) ** 2 < (h.r + e.r) ** 2 && !e.boss && e.type !== 'reaper') hitEnemy(e, 60 * R.S.hp, 'meteor', 0, 0, 0);
+    });
+  }
+  R.hazards = R.hazards.filter(h => !h.done);
+}
+
 const REVIVE_NEAR = 2.5, REVIVE_AUTO = 20;
 function updatePlayer(P, dt) {
   if (P.gone) return;
@@ -774,7 +823,7 @@ function update(dt) {
   const R = run;
   R.t += dt;
   R.me.vw = view.vw; R.me.vh = view.vh;
-  while (R.evIdx < EVENTS.length && R.t >= EVENTS[R.evIdx].t) triggerEvent(EVENTS[R.evIdx++]);
+  while (R.evIdx < R.events.length && R.t >= R.events[R.evIdx].t) triggerEvent(R.events[R.evIdx++]);
 
   // timers
   if (R.timers.length) {
@@ -799,6 +848,7 @@ function update(dt) {
     for (const w of P.weapons) updateWeapon(w, dt);
   }
   updateProjs(dt);
+  updateHazards(dt);
 
   // contact damage
   for (const P of R.players) {
@@ -1026,13 +1076,78 @@ function render(dt) {
   // screen space
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (R.freezeT > 0) { ctx.fillStyle = 'rgba(80,160,255,0.10)'; ctx.fillRect(0, 0, cv.width, cv.height); }
+  drawAtmos(dt, ox, oy);
   if (R.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${Math.min(0.8, R.flashT * 2)})`; ctx.fillRect(0, 0, cv.width, cv.height); }
   drawNums(ox, oy);
   if (R.players.length > 1) drawTags(ox, oy);
   drawHud();
   drawJoystick();
 }
-const PCOL = ['#ffb040', '#60c8ff'];
+// stage atmosphere (local only): darkness around the heroes and weather particles
+const darkCv = makeCanvas(1, 1), darkX = darkCv.getContext('2d');
+const wx = { kind: null, ps: [], camX: 0, camY: 0 };
+const WEATHER = {
+  snow: { n: 70, col: ['#ffffff', '#e0f0ff'], vx: [-6, 6], vy: [14, 26], sz: [1, 2], sway: 1 },
+  sand: { n: 60, col: ['rgba(240,210,150,0.7)', 'rgba(220,180,110,0.6)'], vx: [90, 140], vy: [-4, 10], sz: [1, 1], streak: 6 },
+  ash: { n: 50, col: ['#ff8030', '#ffc040', '#8a7a7a'], vx: [-6, 8], vy: [-22, -10], sz: [1, 1], sway: 1 },
+  rain: { n: 80, col: ['rgba(150,190,220,0.55)'], vx: [-30, -20], vy: [180, 220], sz: [1, 1], streak: 5 },
+  spores: { n: 40, col: ['rgba(200,255,120,0.75)', 'rgba(120,255,220,0.7)'], vx: [-4, 4], vy: [-10, -3], sz: [1, 1], sway: 1, glow: 1 },
+  sparkle: { n: 40, col: ['#80e0ff', '#ff80ff', '#ffffff'], vx: [-1, 1], vy: [-1, 1], sz: [1, 1], twinkle: 1 },
+  fog: { n: 7, col: ['rgba(200,210,230,0.035)'], vx: [3, 8], vy: [-1, 1], sz: [40, 70], blob: 1 },
+  stars: { n: 26, col: ['#ffffff', '#c0a0ff', '#80ffff'], vx: [60, 90], vy: [90, 130], sz: [1, 1], streak: 8 },
+};
+function drawAtmos(dt, ox, oy) {
+  const R = run, S = view.S, W = cv.width, H = cv.height, St = R.S;
+  // weather, in world units relative to the camera so it drifts as the hero moves
+  const kind = St.weather, cfg = WEATHER[kind];
+  if (cfg) {
+    const vw = view.vw, vh = view.vh;
+    if (wx.kind !== kind) {
+      wx.kind = kind; wx.ps = [];
+      for (let i = 0; i < cfg.n; i++) wx.ps.push({ x: rand(0, vw), y: rand(0, vh), vx: rand(...cfg.vx), vy: rand(...cfg.vy), sz: rand(...cfg.sz), c: pick(cfg.col), ph: rand(0, 6) });
+      wx.camX = camX; wx.camY = camY;
+    }
+    const dcx = camX - wx.camX, dcy = camY - wx.camY;
+    wx.camX = camX; wx.camY = camY;
+    const big = Math.abs(dcx) > 100 || Math.abs(dcy) > 100;
+    for (const p of wx.ps) {
+      p.ph += dt;
+      p.x += p.vx * dt + (cfg.sway ? Math.sin(p.ph * 1.7) * 6 * dt : 0) - (big ? 0 : dcx);
+      p.y += p.vy * dt - (big ? 0 : dcy);
+      p.x = ((p.x % vw) + vw) % vw; p.y = ((p.y % vh) + vh) % vh;
+      ctx.fillStyle = p.c;
+      if (cfg.blob) { ctx.beginPath(); ctx.arc(p.x * S, p.y * S, p.sz * S, 0, TAU); ctx.fill(); continue; }
+      if (cfg.twinkle) { ctx.globalAlpha = 0.5 + Math.sin(p.ph * 5) * 0.5; ctx.fillRect(p.x * S, p.y * S, S, S); ctx.globalAlpha = 1; continue; }
+      if (cfg.streak) {
+        const l = Math.hypot(p.vx, p.vy) || 1;
+        ctx.strokeStyle = p.c; ctx.lineWidth = Math.max(1, S * 0.5);
+        ctx.beginPath(); ctx.moveTo(p.x * S, p.y * S); ctx.lineTo((p.x - p.vx / l * cfg.streak) * S, (p.y - p.vy / l * cfg.streak) * S); ctx.stroke();
+        continue;
+      }
+      ctx.fillRect(p.x * S, p.y * S, p.sz * S, p.sz * S);
+    }
+  }
+  // darkness with a pool of light around each hero (drawn at 1/4 resolution, then scaled up)
+  if (St.dark) {
+    const q = 4, dw = Math.ceil(W / q), dh = Math.ceil(H / q);
+    if (darkCv.width !== dw || darkCv.height !== dh) { darkCv.width = dw; darkCv.height = dh; }
+    darkX.globalCompositeOperation = 'source-over';
+    darkX.clearRect(0, 0, dw, dh);
+    darkX.fillStyle = `rgba(4,2,12,${St.dark})`; darkX.fillRect(0, 0, dw, dh);
+    darkX.globalCompositeOperation = 'destination-out';
+    for (const Q of R.players) {
+      if (Q.gone) continue;
+      const x = (Q.x * S + ox) / q, y = (Q.y * S + oy) / q, r0 = 26 * S / q, r1 = 72 * S / q;
+      const g = darkX.createRadialGradient(x, y, r0, x, y, r1);
+      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      darkX.fillStyle = g; darkX.fillRect(x - r1, y - r1, r1 * 2, r1 * 2);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(darkCv, 0, 0, dw * q, dh * q);
+    ctx.imageSmoothingEnabled = false;
+  }
+}
+const PCOL = ['#ffb040', '#60c8ff', '#7df09a', '#ff80d0'];
 function drawPlayer(Q) {
   const mhp = Q.st.maxHp || 1;
   if (Q.down) {
@@ -1056,7 +1171,7 @@ function drawPlayer(Q) {
   const hpw = 16, hx = Q.x - hpw / 2, hy = Q.y + 10;
   ctx.fillStyle = '#000'; ctx.fillRect(hx - 0.5, hy - 0.5, hpw + 1, 3);
   ctx.fillStyle = '#5a1a22'; ctx.fillRect(hx, hy, hpw, 2);
-  ctx.fillStyle = Q === run.me ? '#ff4050' : '#40d0ff'; ctx.fillRect(hx, hy, hpw * clamp(Q.hp / mhp, 0, 1), 2);
+  ctx.fillStyle = Q === run.me ? '#ff4050' : PCOL[Q.idx % 4]; ctx.fillRect(hx, hy, hpw * clamp(Q.hp / mhp, 0, 1), 2);
 }
 // co-op: name tags over heroes, and an arrow at the screen edge pointing to an off-screen partner
 function drawTags(ox, oy) {
@@ -1064,7 +1179,7 @@ function drawTags(ox, oy) {
   ctx.textBaseline = 'middle';
   for (const Q of R.players) {
     if (Q.gone) continue;
-    const sx = Q.x * S + ox, sy = Q.y * S + oy, col = PCOL[Q.idx % 2];
+    const sx = Q.x * S + ox, sy = Q.y * S + oy, col = PCOL[Q.idx % 4];
     const margin = 22 * d, top = view.safeTop * d + 70 * d, bot = H - view.safeBottom * d - 24 * d;
     if (sx > margin && sx < W - margin && sy > top && sy < bot) {
       hudText((Q.idx + 1) + 'P', sx, sy - 14 * S, 10, col, 'center');
@@ -1162,6 +1277,25 @@ function drawProj(p) {
 }
 function drawFx(f) {
   const k = f.t / f.life;
+  if (f.kind === 'warn') {
+    // meteor warning: pulsing red circle that fills in, with the meteor dropping toward it
+    const blink = Math.sin(f.t * 18) > 0;
+    ctx.fillStyle = `rgba(255,60,30,${0.12 + k * 0.22})`;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * k, 0, TAU); ctx.fill();
+    ctx.strokeStyle = blink ? '#ff5030' : '#ffd040'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, TAU); ctx.stroke();
+    const my = f.y - (1 - k) * 160, mx = f.x + (1 - k) * 60;
+    ctx.fillStyle = 'rgba(255,140,40,0.5)'; ctx.beginPath(); ctx.arc(mx, my, 6, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ffe080'; ctx.beginPath(); ctx.arc(mx, my, 3.5, 0, TAU); ctx.fill();
+    return;
+  }
+  if (f.kind === 'meteor') {
+    ctx.globalAlpha = 1 - k;
+    ctx.fillStyle = '#ff8030'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.7 + k * 0.5), 0, TAU); ctx.fill();
+    ctx.fillStyle = '#ffe080'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.4 + k * 0.3), 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (f.kind === 'slash') {
     ctx.save();
     ctx.globalAlpha = 1 - k;

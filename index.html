@@ -50,6 +50,9 @@ h2{margin:4px 0 10px;text-align:center;font-size:24px;color:#ffe48a;text-shadow:
 .tag.new{color:#7df09a;border-color:#7df09a}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.pu.sp{box-shadow:inset 0 0 0 2px var(--gold),0 4px 0 #000}
+.pu.own .c{color:var(--green)}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .cc{background:var(--panel2);border:3px solid #000;box-shadow:inset 0 0 0 2px var(--line),0 4px 0 #000;padding:8px 4px;text-align:center;cursor:pointer;font-size:12px;line-height:1.35}
 .cc.sel{box-shadow:inset 0 0 0 3px var(--gold),0 4px 0 #000}
 .cc.lock{filter:grayscale(.8) brightness(.7)}
@@ -137,6 +140,8 @@ input.code{display:block;width:100%;font:inherit;font-weight:700;font-size:30px;
   <h2>파워업</h2>
   <div class="center" style="margin-bottom:8px">보유 골드 <b class="gold-t" id="sGold">0</b></div>
   <div class="grid3" id="shopGrid"></div>
+  <h3 class="center gold-t" style="margin:14px 0 6px">특별 상품</h3>
+  <div class="grid2" id="shopSpecial"></div>
   <div class="panel" id="shopInfo" style="font-size:13px;line-height:1.5">파워업은 모든 캐릭터에게 영구 적용돼요. 하나 살 때마다 다음 가격이 조금씩 올라가요.</div>
   <div class="row">
     <button class="btn small red" id="bRefund">전부 환불</button>

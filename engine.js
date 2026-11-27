@@ -163,6 +163,7 @@ function makePlayer(idx, charId, power, ctrl) {
   return {
     idx, char: ch, power, ctrl, x: idx * 26, y: 0, tx: idx * 26, ty: 0, hp: 1, r: 5, fx: 1, fy: 0, faceX: 1, moving: false, anim: 0, hurtT: 0, inv: 0,
     st: {}, weapons: [], passives: {}, passiveOrder: [], dmgBy: {}, evoHinted: {}, healCap: 0,
+    wMax: 6 + (pw('slots') >= 1 ? 1 : 0), pMax: 8 + (pw('slots') >= 2 ? 1 : 0),
     pending: 0, rerolls: 1 + pw('reroll'), skips: pw('skip'), revivals: pw('revival'),
     down: false, downT: 0, revP: 0, gone: false, busy: null, vw: view.vw, vh: view.vh, auraR: 0, auraEvo: false,
   };
@@ -188,6 +189,7 @@ function newRun(list, si = 0) {
     computeStats(p);
     p.hp = p.st.maxHp;
     addWeapon(p.char.weapon);
+    if (p.power.supply) later(0.6, openSupply);
   }
   use(run.me);
 }
@@ -1372,8 +1374,9 @@ function drawHud() {
   hudText('☠ ' + R.kills, W - 8 * d, top + 26 * d, 12, '#e8e0f0', 'right');
   hudText('● ' + Math.floor(R.gold * (st.greed || 1)), W - 8 * d, top + 42 * d, 12, '#ffd040', 'right');
   // inventory icons
-  // shrink icons once a row passes 6 so 8 slots stay clear of the centred timer
-  const isz = (Math.max(R.weapons.length, R.passiveOrder.length) > 6 ? 13 : 16) * d, gap = 2 * d;
+  // shrink icons once a row passes 6 (and again past 8) so the slots stay clear of the centred timer
+  const n = Math.max(R.weapons.length, R.passiveOrder.length);
+  const isz = (n > 8 ? 12 : n > 6 ? 13 : 16) * d, gap = 2 * d;
   let x = 6 * d, y = top + 18 * d;
   for (const w of R.weapons) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, isz, isz);

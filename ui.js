@@ -17,6 +17,7 @@ function iconByName(name) {
   if (name === 'coin') return sprURL(ITEM.coin, 'coin');
   if (name === 'chicken') return sprURL(ITEM.chicken, 'chicken');
   if (name === 'magnet') return sprURL(ITEM.magnet, 'magnet');
+  if (name === 'chest') return sprURL(ITEM.chest, 'chest');
   return sprURL(ICONS[name][0], 'i' + name);
 }
 function charURL(id) { return sprURL(CHAR_SPR[id][0], 'c' + id); }
@@ -89,7 +90,8 @@ on('bGo', () => {
   showStages(si => { if (si === null) showChars(); else startRun(c.id, si); });
 });
 function startRun(id, si = save.stage) {
-  newRun(typeof id === 'string' ? [{ char: id, power: save.power, ctrl: 'local' }] : id, si);
+  newRun(typeof id === 'string' ? [{ char: id, power: myPower(), ctrl: 'local' }] : id, si);
+  if (save.supply) { save.supply = 0; persist(); }
   state = 'play';
   input.active = false;
   show(null);
@@ -167,11 +169,55 @@ function showShop() {
     };
     g.appendChild(el);
   }
-  const p = POWERUPS.find(x => x.id === shopSel);
-  $('shopInfo').innerHTML = p
+  showSpecial();
+  const p = POWERUPS.find(x => x.id === shopSel), sp = SPECIALS.find(x => x.id === shopSel);
+  $('shopInfo').innerHTML = sp ? sp.info()
+    : p
     ? `<b>${p.name}</b> · ${p.per}<br><span class="dim">현재 ${powerLv(p.id)}/${p.max}단계. 한 번 더 누르면 구매해요.</span>`
     : '파워업은 모든 캐릭터에게 영구 적용돼요. 항목을 누르면 설명이 보이고, 한 번 더 누르면 구매해요. 하나 살 때마다 다른 파워업 가격도 조금씩 올라가요.';
   show('shop');
+}
+// special items: slot upgrade (permanent, 2 steps) and supply chest (one-shot)
+const SPECIALS = [
+  {
+    id: 'slots',
+    icon: () => (save.slots | 0) >= 1 ? passiveIconURL('growth') : weaponIcon('blade', true),
+    name: () => (save.slots | 0) >= 1 ? '패시브 슬롯 +1' : '무기 슬롯 +1',
+    cost: () => SLOT_COSTS[save.slots | 0],
+    done: () => (save.slots | 0) >= SLOT_COSTS.length,
+    label: () => `${save.slots | 0}/${SLOT_COSTS.length}`,
+    buy: () => { save.slots = (save.slots | 0) + 1; },
+    info: () => `<b>슬롯 확장</b> · 영구 업그레이드<br>1단계(● ${SLOT_COSTS[0]}): 무기 슬롯 6 → 7칸<br>2단계(● ${SLOT_COSTS[1]}): 패시브 슬롯 8 → 9칸<br><span class="dim">현재 ${save.slots | 0}/${SLOT_COSTS.length}단계.${(save.slots | 0) < SLOT_COSTS.length ? ' 한 번 더 누르면 구매해요.' : ''} 환불되지 않아요.</span>`,
+  },
+  {
+    id: 'supply',
+    icon: () => iconByName('chest'),
+    name: () => '보급 상자',
+    cost: () => SUPPLY_COST,
+    done: () => !!save.supply,
+    label: () => save.supply ? '준비됨' : '1회용',
+    buy: () => { save.supply = 1; },
+    info: () => `<b>보급 상자</b> · 1회용 소모품<br>다음 게임을 시작하자마자 보물상자 ${SUPPLY_CHESTS}개를 열고 시작해요. 한 게임에 쓰고 나면 사라지니 매번 새로 사야 해요.<br><span class="dim">${save.supply ? '이미 준비돼 있어요! 다음 게임에서 사용돼요.' : '한 번 더 누르면 구매해요.'}</span>`,
+  },
+];
+function showSpecial() {
+  const g = $('shopSpecial');
+  g.innerHTML = '';
+  for (const s of SPECIALS) {
+    const done = s.done(), cost = done ? 0 : s.cost();
+    const el = document.createElement('div');
+    el.className = 'pu sp' + (done ? (s.id === 'supply' ? ' own' : ' max') : save.gold < cost ? ' poor' : '');
+    if (shopSel === s.id) el.style.boxShadow = 'inset 0 0 0 3px #ffd040,0 4px 0 #000';
+    el.innerHTML = `<img src="${s.icon()}" alt=""><div class="n">${s.name()}</div><div class="dim" style="font-size:11px;margin:4px 0">${s.label()}</div><div class="c">${done ? (s.id === 'supply' ? '보유 중' : 'MAX') : '● ' + cost}</div>`;
+    el.onclick = () => {
+      if (shopSel !== s.id) { shopSel = s.id; sfx.click(); showShop(); return; }
+      if (done || save.gold < cost) { tone(150, 0.1, 'square', 0.04); return; }
+      save.gold -= cost; s.buy(); persist();
+      sfx.coin();
+      showShop();
+    };
+    g.appendChild(el);
+  }
 }
 on('bShop', () => { shopSel = null; showShop(); });
 on('bShopBack', showTitle);
@@ -262,9 +308,9 @@ function weightedPick(arr) {
 function rollChoices() {
   const R = run, pool = [];
   for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ type: 'wup', id: w.id, w: 3 });
-  if (R.weapons.length < 6) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
+  if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
   for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ type: 'pup', id, w: 2.5 });
-  if (R.passiveOrder.length < 8) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ type: 'pnew', id, w: 1 });
+  if (R.passiveOrder.length < R.player.pMax) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ type: 'pnew', id, w: 1 });
   const n = 3 + (Math.random() < Math.min(0.9, 0.1 + (st.luck - 1) * 0.9) ? 1 : 0);
   const out = [];
   while (out.length < n && pool.length) out.push(pool.splice(weightedPick(pool), 1)[0]);
@@ -367,7 +413,32 @@ function openChest(boss) {
   if (boss) count = late ? 5 : 3;
   else if (r < 0.03 * L * (late ? 2 : 1)) count = 5;
   else if (r < 0.13 * L) count = 3;
-  const items = [];
+  const items = rollChestItems(count);
+  const g = Math.round((boss ? rand(80, 150) : rand(20, 60)) * (late ? 1.5 : 1));
+  R.gold += g;
+  if (SIM) return;
+  evo2Hint();
+  if (R.player !== R.me) { netChest(R.player, items, count, Math.round(g * st.greed)); return; }
+  showChest(items, count, Math.round(g * st.greed));
+}
+// 보급 상자 (consumable): opens SUPPLY_CHESTS ordinary chests at the start of a run, shown together
+function openSupply() {
+  const R = run, L = st.luck;
+  let items = [], g = 0;
+  for (let c = 0; c < SUPPLY_CHESTS; c++) {
+    const r = Math.random();
+    items = items.concat(rollChestItems(r < 0.03 * L ? 5 : r < 0.13 * L ? 3 : 1));
+    g += Math.round(rand(20, 60));
+  }
+  R.gold += g;
+  if (SIM) return;
+  evo2Hint();
+  const title = `보급 상자 ×${SUPPLY_CHESTS}!`;
+  if (R.player !== R.me) { netChest(R.player, items, items.length, Math.round(g * st.greed), title); return; }
+  showChest(items, items.length, Math.round(g * st.greed), title);
+}
+function rollChestItems(count) {
+  const R = run, items = [];
   for (let i = 0; i < count; i++) {
     const ew = R.weapons.find(evoReady);
     if (ew) { evolveWeapon(ew); items.push({ kind: 'evo', id: ew.id }); continue; }
@@ -381,18 +452,13 @@ function openChest(boss) {
     if (it.kind === 'w') { const w = R.weapons.find(x => x.id === it.id); levelWeapon(w); it.lv = w.lvl; } else { addPassive(it.id); it.lv = R.passives[it.id]; }
     items.push(it);
   }
-  const g = Math.round((boss ? rand(80, 150) : rand(20, 60)) * (late ? 1.5 : 1));
-  R.gold += g;
-  if (SIM) return;
-  evo2Hint();
-  if (R.player !== R.me) { netChest(R.player, items, count, Math.round(g * st.greed)); return; }
-  showChest(items, count, Math.round(g * st.greed));
+  return items;
 }
-function showChest(items, count, g) {
+function showChest(items, count, g, title) {
   state = 'chest';
   input.active = false;
   sfx.chest(); vibrate(60);
-  $('chestTitle').textContent = items.some(i => i.kind === 'evo2') ? '진화 강화!' : items.some(i => i.kind === 'evo') ? '진화!' : count > 1 ? `보물상자 ×${count}!` : '보물상자!';
+  $('chestTitle').textContent = title || (items.some(i => i.kind === 'evo2') ? '진화 강화!' : items.some(i => i.kind === 'evo') ? '진화!' : count > 1 ? `보물상자 ×${count}!` : '보물상자!');
   $('chestItems').innerHTML = items.map(it => {
     if (it.kind === 'evo') { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}<span class="tag">진화</span></div><div class="d">${W.evoDesc}</div></div></div>`; }
     if (it.kind === 'evo2' && EVO2[it.id]) { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}+<span class="tag">강화</span></div><div class="d">${EVO2[it.id].combo} 조합 완성! 진화 무기가 더 강력해졌어요.</div></div></div>`; }

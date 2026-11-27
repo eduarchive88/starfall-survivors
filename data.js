@@ -18,7 +18,7 @@ const SAVE_KEY = 'starfall-survivors-v1';
 function loadSave() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { /* ignore */ }
-  const d = { gold: 0, power: {}, chars: { knight: true, mage: true, rogue: true }, best: {}, clears: {}, stages: {}, stage: 0, sound: true, nums: true, vibe: true, runs: 0, kills: 0, lastChar: 'knight' };
+  const d = { gold: 0, power: {}, chars: { knight: true, mage: true, rogue: true }, best: {}, clears: {}, stages: {}, stage: 0, sound: true, nums: true, vibe: true, runs: 0, kills: 0, lastChar: 'knight', slots: 0, supply: 0 };
   return Object.assign(d, s || {});
 }
 let save = loadSave();
@@ -486,6 +486,14 @@ const POWERUPS = [
   { id: 'reroll', icon: 'reroll', name: '새로고침', max: 5, cost: 500, per: '단계당 +1회' },
   { id: 'skip', icon: 'skip', name: '건너뛰기', max: 5, cost: 200, per: '단계당 +1회' },
 ];
+
+// special shop items (not part of save.power, not refunded)
+// slots: 1st buy = weapon slot +1, 2nd buy = passive slot +1
+const SLOT_COSTS = [100000, 150000];
+// supply: one-shot, consumed by the next run, which starts by opening 3 chests
+const SUPPLY_COST = 3000, SUPPLY_CHESTS = 3;
+// the power object a player brings into a run (save.power + slot upgrades + supply flag)
+function myPower() { return Object.assign({}, save.power, { slots: save.slots | 0, supply: save.supply ? 1 : 0 }); }
 
 const ENEMIES = {
   bat: { hp: 4, spd: 50, dmg: 3, xp: 1, r: 5, spr: 'bat', kb: 1.2 },

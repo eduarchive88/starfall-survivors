@@ -54,10 +54,11 @@ const peerSlots = () => Object.keys(NET.peers).map(Number).sort((a, b) => a - b)
 function cleanPower(pw) {
   const o = {};
   for (const p of POWERUPS) { const v = pw ? Math.floor(+pw[p.id]) : 0; if (v > 0) o[p.id] = Math.min(p.max, v); }
+  if (pw) { o.slots = clamp(Math.floor(+pw.slots) || 0, 0, SLOT_COSTS.length); o.supply = pw.supply ? 1 : 0; }
   return o;
 }
 function myChar() { return save.chars[save.lastChar] ? save.lastChar : 'knight'; }
-function sendMe() { netSend({ t: 'me', char: myChar(), power: save.power, vw: view.vw, vh: view.vh }); }
+function sendMe() { netSend({ t: 'me', char: myChar(), power: myPower(), vw: view.vw, vh: view.vh }); }
 
 // ============================================================
 // lobby screens
@@ -127,7 +128,7 @@ on('bLStart', () => {
   const slots = peerSlots().filter(s => NET.peers[s].char);
   if (!slots.length) return;
   const si = lobbyStage();
-  const list = [{ char: myChar(), power: save.power, ctrl: 'local', slot: 0 }]
+  const list = [{ char: myChar(), power: myPower(), ctrl: 'local', slot: 0 }]
     .concat(slots.map(s => ({ char: NET.peers[s].char, power: NET.peers[s].power, ctrl: 'remote', slot: s })));
   const chars = list.map(o => o.char);
   list.forEach((o, i) => { if (i) netSend({ t: 'start', chars, me: i, st: si }, o.slot); });
@@ -254,10 +255,10 @@ function remoteLevel(G, quiet) {
   netSend({ t: 'lv', ch: G.choices, rr: G.rerolls, sk: G.skips, q: quiet ? 1 : 0 }, G.slot);
 }
 // called by openChest when the partner opened it
-function netChest(G, items, count, g) {
+function netChest(G, items, count, g, title) {
   G.busy = 'chest';
   sendInv(G);
-  netSend({ t: 'chest', items, count, g }, G.slot);
+  netSend({ t: 'chest', items, count, g, sup: title ? 1 : 0 }, G.slot);
 }
 function sendInv(G) {
   if (!G) return;
@@ -390,6 +391,7 @@ function guestMsg(m) {
       if (!Array.isArray(m.chars) || m.chars.length < 2 || m.chars.length > MAX_PLAYERS) break;
       if (!(m.me >= 1 && m.me < m.chars.length)) break;
       guestRun(m.chars, m.me | 0, clamp(m.st | 0, 0, STAGES.length - 1));
+      if (save.supply) { save.supply = 0; persist(); }
       NET.inGame = true;
       hooks.guest = guestUpdate;
       state = 'play'; input.active = false;
@@ -413,7 +415,7 @@ function guestMsg(m) {
       break;
     case 'chest':
       if (!run || state === 'result') break;
-      showChest(m.items || [], m.count | 0, m.g | 0);
+      showChest(m.items || [], m.count | 0, m.g | 0, m.sup ? `보급 상자 ×${SUPPLY_CHESTS}!` : undefined);
       break;
     case 'over':
       if (!run) break;

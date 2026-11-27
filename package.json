@@ -1,6 +1,6 @@
 {
   "name": "starfall-survivors",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "별빛 생존자 — mobile pixel survivor game with 10 stages and up to 4-player online co-op",
   "main": "server.js",

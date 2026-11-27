@@ -427,7 +427,7 @@ function openSupply() {
   let items = [], g = 0;
   for (let c = 0; c < SUPPLY_CHESTS; c++) {
     const r = Math.random();
-    items = items.concat(rollChestItems(r < 0.03 * L ? 5 : r < 0.13 * L ? 3 : 1));
+    items = items.concat(rollChestItems(r < 0.03 * L ? 5 : r < 0.13 * L ? 3 : 1, true));
     g += Math.round(rand(20, 60));
   }
   R.gold += g;
@@ -437,7 +437,8 @@ function openSupply() {
   if (R.player !== R.me) { netChest(R.player, items, items.length, Math.round(g * st.greed), title); return; }
   showChest(items, items.length, Math.round(g * st.greed), title);
 }
-function rollChestItems(count) {
+// fresh = 보급 상자: may also hand out new weapons / passives while there are free slots
+function rollChestItems(count, fresh) {
   const R = run, items = [];
   for (let i = 0; i < count; i++) {
     const ew = R.weapons.find(evoReady);
@@ -445,11 +446,16 @@ function rollChestItems(count) {
     const e2 = R.weapons.find(evo2Ready);
     if (e2) { empowerWeapon(e2); items.push({ kind: 'evo2', id: e2.id }); continue; }
     const pool = [];
-    for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ kind: 'w', id: w.id });
-    for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ kind: 'p', id });
+    for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ kind: 'w', id: w.id, w: 1.5 });
+    for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ kind: 'p', id, w: 1.5 });
+    if (fresh) {
+      if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ kind: 'w', id, w: 1, nw: 1 });
+      if (R.passiveOrder.length < R.player.pMax) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ kind: 'p', id, w: 0.6, nw: 1 });
+    }
     if (!pool.length) { items.push({ kind: 'gold' }); R.gold += 40; continue; }
-    const it = pick(pool);
-    if (it.kind === 'w') { const w = R.weapons.find(x => x.id === it.id); levelWeapon(w); it.lv = w.lvl; } else { addPassive(it.id); it.lv = R.passives[it.id]; }
+    const { kind, id, nw } = pool[weightedPick(pool)], it = { kind, id };
+    if (kind === 'w') { const w = nw ? addWeapon(id) : R.weapons.find(x => x.id === id); if (!nw) levelWeapon(w); it.lv = w.lvl; } else { addPassive(id); it.lv = R.passives[id]; }
+    if (nw) it.nw = 1;
     items.push(it);
   }
   return items;
@@ -462,8 +468,8 @@ function showChest(items, count, g, title) {
   $('chestItems').innerHTML = items.map(it => {
     if (it.kind === 'evo') { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}<span class="tag">진화</span></div><div class="d">${W.evoDesc}</div></div></div>`; }
     if (it.kind === 'evo2' && EVO2[it.id]) { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}+<span class="tag">강화</span></div><div class="d">${EVO2[it.id].combo} 조합 완성! 진화 무기가 더 강력해졌어요.</div></div></div>`; }
-    if (it.kind === 'w') return `<div class="card chest-item"><img class="ico" src="${weaponIcon(it.id)}" alt=""><div><div class="t">${WEAPONS[it.id].name}<span class="tag">Lv ${it.lv}</span></div></div></div>`;
-    if (it.kind === 'p') return `<div class="card chest-item"><img class="ico" src="${passiveIconURL(it.id)}" alt=""><div><div class="t">${PASSIVES[it.id].name}<span class="tag">Lv ${it.lv}</span></div></div></div>`;
+    if (it.kind === 'w') return `<div class="card chest-item"><img class="ico" src="${weaponIcon(it.id)}" alt=""><div><div class="t">${WEAPONS[it.id].name}<span class="tag">${it.nw ? 'NEW' : 'Lv ' + it.lv}</span></div></div></div>`;
+    if (it.kind === 'p') return `<div class="card chest-item"><img class="ico" src="${passiveIconURL(it.id)}" alt=""><div><div class="t">${PASSIVES[it.id].name}<span class="tag">${it.nw ? 'NEW' : 'Lv ' + it.lv}</span></div></div></div>`;
     return `<div class="card chest-item"><img class="ico" src="${iconByName('coin')}" alt=""><div><div class="t">금화</div></div></div>`;
   }).join('');
   $('chestGold').textContent = `+ ● ${g}`;

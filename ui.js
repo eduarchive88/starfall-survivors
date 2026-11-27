@@ -252,7 +252,7 @@ function weightedPick(arr) {
 function rollChoices() {
   const R = run, pool = [];
   for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ type: 'wup', id: w.id, w: 3 });
-  if (R.weapons.length < 8) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
+  if (R.weapons.length < 6) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
   for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ type: 'pup', id, w: 2.5 });
   if (R.passiveOrder.length < 8) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ type: 'pnew', id, w: 1 });
   const n = 3 + (Math.random() < Math.min(0.9, 0.1 + (st.luck - 1) * 0.9) ? 1 : 0);

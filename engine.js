@@ -1365,7 +1365,8 @@ function drawHud() {
   hudText('☠ ' + R.kills, W - 8 * d, top + 26 * d, 12, '#e8e0f0', 'right');
   hudText('● ' + Math.floor(R.gold * (st.greed || 1)), W - 8 * d, top + 42 * d, 12, '#ffd040', 'right');
   // inventory icons
-  const isz = 16 * d, gap = 2 * d;
+  // shrink icons once a row passes 6 so 8 slots stay clear of the centred timer
+  const isz = (Math.max(R.weapons.length, R.passiveOrder.length) > 6 ? 13 : 16) * d, gap = 2 * d;
   let x = 6 * d, y = top + 18 * d;
   for (const w of R.weapons) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, isz, isz);

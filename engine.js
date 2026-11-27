@@ -145,7 +145,7 @@ function computeStats(p = run.player) {
     area: 1 + pw('area') * 0.05 + pl('area') * 0.1 + (b.area || 0),
     speed: 1 + pw('speed') * 0.05 + pl('speed') * 0.1 + (b.speed || 0),
     duration: 1 + pw('duration') * 0.05 + pl('duration') * 0.1 + (b.duration || 0),
-    amount: pw('amount') + pl('amount'),
+    amount: pw('amount') + pl('amount') + (b.amount || 0),
     move: 72 * (1 + pw('move') * 0.05 + pl('move') * 0.1 + (b.move || 0)),
     magnet: 40 * (1 + pw('magnet') * 0.1 + pl('magnet') * 0.3),
     luck: 1 + pw('luck') * 0.1 + pl('luck') * 0.1 + (b.luck || 0),
@@ -164,7 +164,7 @@ function makePlayer(idx, charId, power, ctrl) {
     idx, char: ch, power, ctrl, x: idx * 26, y: 0, tx: idx * 26, ty: 0, hp: 1, r: 5, fx: 1, fy: 0, faceX: 1, moving: false, anim: 0, hurtT: 0, inv: 0,
     st: {}, weapons: [], passives: {}, passiveOrder: [], dmgBy: {}, evoHinted: {}, healCap: 0,
     wMax: 6 + (pw('slots') >= 1 ? 1 : 0), pMax: 8 + (pw('slots') >= 2 ? 1 : 0),
-    pending: 0, rerolls: 1 + pw('reroll'), skips: pw('skip'), revivals: pw('revival'),
+    pending: 0, rerolls: 1 + pw('reroll'), skips: pw('skip'), revivals: pw('revival') + (ch.perk === 'reap' ? 1 : 0), perkT: 3,
     down: false, downT: 0, revP: 0, gone: false, busy: null, vw: view.vw, vh: view.vh, auraR: 0, auraEvo: false,
   };
 }
@@ -192,6 +192,92 @@ function newRun(list, si = 0) {
     if (p.power.supply) later(0.6, openSupply);
   }
   use(run.me);
+  setupSecrets();
+}
+
+// ============================================================
+// hidden content: the slayable reaper, treasure maps (odd stages), wandering heroes (even stages)
+// ============================================================
+function setupSecrets() {
+  const R = run, luck = R.me.st.luck || 1, force = SIM && window.SIM_SECRET;
+  R.treasure = null; R.npc = null; R.mapAt = 0; R.npcAt = 0; R.npcId = null;
+  if (R.si % 2 === 0) {
+    // stages 1·3·5·7·9: a torn treasure map may drop from a monster at a random moment
+    if (force || Math.random() < MAP_CHANCE * luck) R.mapAt = force ? 30 : rand(90, 720);
+  } else {
+    // stages 2·4·6·8·10: this stage's hidden hero may wander by
+    const H = CHARS.find(c => c.hidden === R.si);
+    if (H && (force || Math.random() < NPC_CHANCE * luck)) { R.npcId = H.id; R.npcAt = force ? 20 : rand(180, 720); }
+  }
+}
+function grantGold(v) {
+  // paid straight into the save so it is kept even if the run is lost; guests add it to their own save
+  save.gold += v; persist();
+  netEv(['G', v]);
+}
+// every client unlocks into its own save; returns a line describing what this player got
+function unlockLocal(id) {
+  const c = CHARS.find(x => x.id === id);
+  if (!c) return '';
+  if (save.chars[id]) { save.gold += OWNED_BONUS; persist(); return `이미 함께하는 동료예요 · +${OWNED_BONUS} 골드`; }
+  save.chars[id] = true; persist();
+  return `${c.name} 해금! 캐릭터 선택에서 고를 수 있어요`;
+}
+function unlockAll(id, head, color) {
+  const line = unlockLocal(id);
+  netEv(['U', id, head, color]);
+  run.banner = { text: head, color, t: 3, dur: 3 };
+  later(3, () => { run.banner = { text: line, color: '#fff0c0', t: 3.5, dur: 3.5 }; });
+}
+function secretsTick(dt) {
+  const R = run, pls = alivePlayers();
+  // treasure: stand on the ✕ for 2 seconds to dig it up
+  const T = R.treasure;
+  if (T) {
+    const on = pls.some(P => (P.x - T.x) ** 2 + (P.y - T.y) ** 2 < 14 * 14);
+    T.dig = on ? T.dig + dt : Math.max(0, T.dig - dt);
+    if (on && Math.random() < dt * 20) R.parts.push({ x: T.x + rand(-4, 4), y: T.y, vx: rand(-40, 40), vy: rand(-80, -30), t: 0, life: 0.4, c: pick(['#8a6a40', '#c0a070', '#5a4020']), sz: 1 });
+    if (T.dig >= 2) {
+      R.treasure = null;
+      grantGold(TREASURE_GOLD);
+      R.flashT = 0.4; sfx.chest(); vibrate(120);
+      for (let i = 0; i < 40; i++) R.parts.push({ x: T.x, y: T.y - 4, vx: rand(-90, 90), vy: rand(-160, -40), t: 0, life: rand(0.5, 0.9), c: pick(['#ffd040', '#fff6c0', '#ffb020']), sz: 2 });
+      banner(`보물 발견! +${TREASURE_GOLD} 골드 (바로 저장됐어요)`, '#ffd040', 4);
+    }
+  }
+  // wandering hero
+  if (R.npcAt && R.t >= R.npcAt && !R.cleared) {
+    R.npcAt = 0;
+    const P = randomAlive(), a = rand(0, TAU), d = rand(260, 330);
+    R.npc = { id: R.npcId, x: P.x + Math.cos(a) * d, y: P.y + Math.sin(a) * d, life: NPC_LIFE, dir: rand(0, TAU), turn: 2, anim: 0, faceX: 1 };
+    banner('어디선가 낯선 기운이 느껴진다…', '#d0b0ff', 3);
+  }
+  const N = R.npc;
+  if (N) {
+    N.life -= dt; N.turn -= dt; N.anim += dt;
+    if (N.turn <= 0) { N.turn = rand(1.5, 3); N.dir = rand(0, TAU); }
+    N.x += Math.cos(N.dir) * 24 * dt; N.y += Math.sin(N.dir) * 24 * dt;
+    N.faceX = Math.cos(N.dir) < 0 ? -1 : 1;
+    const met = pls.find(P => (P.x - N.x) ** 2 + (P.y - N.y) ** 2 < 14 * 14);
+    if (met) {
+      R.npc = null;
+      const c = CHARS.find(x => x.id === N.id);
+      R.flashT = 0.5; sfx.level(); vibrate(150);
+      for (let i = 0; i < 30; i++) R.parts.push({ x: N.x, y: N.y - 4, vx: rand(-80, 80), vy: rand(-140, -30), t: 0, life: rand(0.5, 0.9), c: pick(['#d0b0ff', '#ffffff', '#ffd040']), sz: 2 });
+      unlockAll(N.id, `✨ ${c.title} ${c.name}을(를) 만났다!`, '#d0b0ff');
+    } else if (N.life <= 0) {
+      R.npc = null;
+      banner('낯선 기운이 사라졌다…', '#a090c0', 2.5);
+    }
+  }
+}
+function onLegendKill(e) {
+  const R = run;
+  R.legendDown = true; R.bossBar = null; R.flashT = 0.8; R.shake = 4;
+  sfx.boom(); vibrate(300);
+  R.pickups.push({ type: 'chest', x: e.x, y: e.y, boss: true });
+  for (let i = 0; i < 60; i++) R.parts.push({ x: e.x, y: e.y - 6, vx: rand(-120, 120), vy: rand(-180, -20), t: 0, life: rand(0.6, 1.1), c: pick(['#ff3030', '#3e3458', '#e8e4d0', '#c070ff']), sz: 2 });
+  unlockAll('heir', '💀 사신을 쓰러뜨렸다! 사신의 계승자가 깨어난다', '#ff6070');
 }
 
 function wstats(w) {
@@ -263,7 +349,7 @@ function forNear(x, y, r, fn) {
 function nearestEnemy(x, y, maxR) {
   let best = null, bd = maxR * maxR;
   for (const e of run.enemies) {
-    if (e.dead || e.type === 'reaper') continue;
+    if (e.dead || e.immortal) continue;
     const dx = e.x - x, dy = e.y - y, d = dx * dx + dy * dy;
     if (d < bd) { bd = d; best = e; }
   }
@@ -274,7 +360,7 @@ function onScreen(e, pad = 0, P = run.player) {
 }
 function randomVisibleEnemy() {
   const list = [];
-  for (const e of run.enemies) if (!e.dead && e.type !== 'reaper' && onScreen(e, 4)) list.push(e);
+  for (const e of run.enemies) if (!e.dead && !e.immortal && onScreen(e, 4)) list.push(e);
   return list.length ? pick(list) : null;
 }
 function nearestPlayer(x, y) {
@@ -318,7 +404,13 @@ function spawnEnemy(type, o = {}) {
     wn /= activePlayers().length;
     e.boss = true; e.hp = o.hp * (0.85 + 0.15 * wn / 3) * (1 + (n - 1) * 0.6); e.sc = 3; e.r *= 2.6; e.kbRes = 0; e.xp = 100; e.dmg *= 2; e.name = o.name; e.spd *= 1.1;
   }
-  if (type === 'reaper') { e.sc = 1.5; e.dmg = 999; e.kbRes = 0; }
+  if (type === 'reaper') {
+    e.sc = 1.5; e.kbRes = 0;
+    // the first reaper after a clear is a fair (but brutal) fight; the rest are unstoppable
+    e.dmg = 999;
+    if (o.legend) { e.legend = true; e.hp = REAPER_LEGEND_HP; e.name = '💀 사신'; }
+    else e.immortal = true;
+  }
   e.maxHp = e.hp;
   run.enemies.push(e);
   return e;
@@ -327,7 +419,14 @@ function spawning(dt) {
   const R = run, n = coopN();
   if (R.reaperOn) {
     R.reaperT -= dt;
-    if (R.reaperT <= 0) { R.reaperT = 30; for (const p of alivePlayers()) spawnEnemy('reaper', { near: p }); }
+    if (R.reaperT <= 0) {
+      R.reaperT = 30;
+      // the very first reaper is the one that can (barely) be slain: same speed and touch of death, 1.8M HP
+      alivePlayers().forEach((p, i) => {
+        const e = spawnEnemy('reaper', { near: p, legend: !R.legendOut && i === 0 });
+        if (e.legend) { R.legendOut = true; R.bossBar = e; }
+      });
+    }
     return;
   }
   const W = stageWave(R.S, (R.t / 60) | 0);
@@ -412,6 +511,9 @@ function hitEnemy(e, dmg, wid, kx, ky, kb, crit) {
   if (kb && e.kbRes) { const f = kb * e.kbRes * 110; e.kbx += kx * f; e.kby += ky * f; }
   addNum(e.x, e.y - e.spr[0].h * e.sc / 2, dmg, crit);
   sfx.hit();
+  const perk = P.char.perk;
+  if (perk === 'chill') e.slowT = 1.5;
+  else if (perk === 'venom' && wid !== 'venom') { e.venT = 3; e.venD = Math.max(e.venD || 0, 8 * st.might); e.venBy = P; }
   if (wid === 'blade' && R.weapons.find(w => w.id === 'blade' && w.evo)) healPlayer(0.4);
   if (wid === 'aura' && R.weapons.find(w => w.id === 'aura' && w.evo)) healPlayer(0.25);
   if (e.hp <= 0) killEnemy(e);
@@ -427,6 +529,9 @@ function killEnemy(e) {
   const R = run;
   e.dead = true;
   R.kills++;
+  if (e.legend) { onLegendKill(e); return; }
+  if (R.player.char.perk === 'reap') healPlayer(0.3);
+  if (R.mapAt && R.t >= R.mapAt && !R.cleared && !e.line) { R.mapAt = 0; R.pickups.push({ type: 'map', x: e.x, y: e.y }); }
   dropGem(e.x, e.y, e.xp);
   if (Math.random() < 0.012 * st.luck) R.pickups.push({ type: 'coin', x: e.x + 4, y: e.y, v: 1 });
   if (e.elite || e.boss) R.pickups.push({ type: 'chest', x: e.x, y: e.y, boss: !!e.boss });
@@ -484,6 +589,17 @@ function hurtPlayer(d, src) {
   if (SIM) { run.taken = (run.taken || 0) + d; const k = src ? src.type + (src.boss ? '!' : src.elite ? '+' : src.line ? '~' : src.ring ? 'o' : '') : '?'; (run.takenBy || (run.takenBy = {}))[k] = (run.takenBy[k] || 0) + d; if (window.SIM_GOD) return; }
   P.hp -= d; P.hurtT = 0.15;
   sfx.hurt();
+  if (P.char.perk === 'ember' && R.t >= (P.emberT || 0)) {
+    P.emberT = R.t + 1;
+    const rad = 46 * st.area, dmg = 50 * st.might;
+    forNear(P.x, P.y, rad, e => {
+      const dx = e.x - P.x, dy = e.y - P.y;
+      if (dx * dx + dy * dy > (rad + e.r) ** 2) return;
+      const dd = Math.hypot(dx, dy) || 1;
+      hitEnemy(e, dmg, 'ember', dx / dd, dy / dd, 1.2);
+    });
+    addFx({ kind: 'meteor', x: P.x, y: P.y, r: rad, t: 0, life: 0.35 });
+  }
   if (P === R.me) { R.shake = Math.min(R.shake + 1.5, 4); vibrate(25); }
 }
 // XP is shared: every player levels up together and picks their own upgrade
@@ -512,6 +628,13 @@ function collectPickup(p) {
     }
     case 'ice': R.freezeT = 8; sfx.pick(); banner('적들이 얼어붙었다!', '#90e0ff', 1.6); break;
     case 'chest': openChest(p.boss); break;
+    case 'map': {
+      const a = rand(0, TAU), d = rand(1500, 2500);
+      R.treasure = { x: P.x + Math.cos(a) * d, y: P.y + Math.sin(a) * d, dig: 0 };
+      sfx.chest();
+      banner('찢어진 보물지도! 화살표를 따라 ✕를 찾아 2초간 파세요', '#ffd040', 4.5);
+      break;
+    }
   }
 }
 
@@ -574,6 +697,22 @@ function updateWeapon(w, dt) {
           });
           hitProps(cx, cy, bw / 2);
           addFx({ kind: 'slash', x: cx, y: cy, w: bw, h: bh, side, t: 0, life: 0.22, evo: w.evo });
+        });
+      }
+      break;
+    }
+    case 'soulscythe': {
+      for (let i = 0; i < amount; i++) {
+        later(i * 0.22, () => {
+          const Q = run.player, rad = 40 * s.area * st.area;
+          forNear(Q.x, Q.y, rad, e => {
+            const dx = e.x - Q.x, dy = e.y - Q.y;
+            if (dx * dx + dy * dy > (rad + e.r) ** 2) return;
+            const dd = Math.hypot(dx, dy) || 1, crit = w.evo && Math.random() < 0.25;
+            hitEnemy(e, crit ? dmg * 2 : dmg, 'soulscythe', dx / dd, dy / dd, 0.9, crit);
+          });
+          hitProps(Q.x, Q.y, rad);
+          addFx({ kind: 'reap', x: Q.x, y: Q.y, r: rad, t: 0, life: 0.3, evo: w.evo, side: i % 2 ? -1 : 1 });
         });
       }
       break;
@@ -817,7 +956,20 @@ function updatePlayer(P, dt) {
   if (P.hurtT > 0) P.hurtT -= dt;
   if (P.inv > 0) P.inv -= dt;
   P.healCap = Math.min(P.healCap + dt * 4, 4);
-  P.hp = Math.min(P.st.maxHp, P.hp + P.st.recovery * dt);
+  const bloom = P.char.perk === 'bloom' && P.hp < P.st.maxHp / 2 ? 3 : 1;
+  P.hp = Math.min(P.st.maxHp, P.hp + P.st.recovery * bloom * dt);
+}
+// starfall perk: every few seconds shooting stars strike enemies on screen
+function perkTick(P, dt) {
+  if (P.char.perk !== 'starfall' || (P.perkT -= dt) > 0) return;
+  P.perkT = 7 * st.cooldown;
+  const dmg = (25 + run.level * 1.5) * st.might;
+  for (let i = 0; i < 6 + st.amount; i++) later(i * 0.08, () => {
+    const e = randomVisibleEnemy();
+    if (!e) return;
+    hitEnemy(e, dmg, 'starfall', 0, 0, 0);
+    addFx({ kind: 'bolt', x: e.x, y: e.y, r: 10, t: 0, life: 0.3, evo: true });
+  });
 }
 function revive(P, frac) {
   P.down = false; P.revP = 0; P.downT = 0;
@@ -855,7 +1007,9 @@ function update(dt) {
     if (!alive(P)) continue;
     use(P);
     for (const w of P.weapons) updateWeapon(w, dt);
+    perkTick(P, dt);
   }
+  secretsTick(dt);
   updateProjs(dt);
   updateHazards(dt);
 
@@ -904,6 +1058,16 @@ function updateEnemies(dt) {
   for (const e of R.enemies) {
     if (e.dead) continue;
     if (e.flash > 0) e.flash -= dt;
+    if (e.venT > 0) {
+      e.venT -= dt;
+      const d = e.venD * dt;
+      if (e.venBy) e.venBy.dmgBy.venom = (e.venBy.dmgBy.venom || 0) + Math.min(d, Math.max(0, e.hp));
+      e.hp -= d;
+      if (Math.random() < dt * 6) R.parts.push({ x: e.x + rand(-3, 3), y: e.y - 4, vx: 0, vy: -30, t: 0, life: 0.4, c: '#a0ff40', sz: 1 });
+      if (e.hp <= 0 && !e.immortal) { use(e.venBy && !e.venBy.gone ? e.venBy : R.me); killEnemy(e); use(R.me); continue; }
+    }
+    let slow = 1;
+    if (e.slowT > 0) { e.slowT -= dt; slow = e.boss || e.legend ? 0.8 : 0.6; }
     const P = nearestPlayer(e.x, e.y) || R.me;
     let vx = 0, vy = 0;
     if (e.line) {
@@ -914,7 +1078,7 @@ function updateEnemies(dt) {
     } else if (!frozen || e.type === 'reaper') {
       if (e.ring && (e.life -= dt) <= 0) { e.dead = true; continue; }
       const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx, dy) || 1;
-      vx = dx / d * e.spd; vy = dy / d * e.spd;
+      vx = dx / d * e.spd * slow; vy = dy / d * e.spd * slow;
       e.anim += dt;
     }
     e.x += (vx + e.kbx) * dt; e.y += (vy + e.kby) * dt;
@@ -1038,6 +1202,22 @@ function render(dt) {
     ctx.fillStyle = '#ffd040'; ctx.fillRect(p.x - 2, p.y - 11 + (f > 0.3 ? 1 : 0), 4, 4);
     ctx.fillStyle = '#fff6c0'; ctx.fillRect(p.x - 1, p.y - 9, 2, 2);
   }
+  // treasure ✕ and its dig progress
+  const T = R.treasure;
+  if (T) {
+    const pulse = 0.5 + Math.sin(frameT * 5) * 0.25;
+    ctx.fillStyle = `rgba(255,208,64,${0.18 * pulse})`; ctx.beginPath(); ctx.arc(T.x, T.y, 16, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#3a1008'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(T.x - 6, T.y - 6); ctx.lineTo(T.x + 6, T.y + 6); ctx.moveTo(T.x + 6, T.y - 6); ctx.lineTo(T.x - 6, T.y + 6); ctx.stroke();
+    ctx.strokeStyle = '#e03020'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(T.x - 6, T.y - 6); ctx.lineTo(T.x + 6, T.y + 6); ctx.moveTo(T.x + 6, T.y - 6); ctx.lineTo(T.x - 6, T.y + 6); ctx.stroke();
+    if (T.dig > 0) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(T.x, T.y, 13, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = '#ffd040'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(T.x, T.y, 13, -Math.PI / 2, -Math.PI / 2 + clamp(T.dig / 2, 0, 1) * TAU); ctx.stroke();
+    }
+  }
   // gems & pickups
   for (const g of R.gems) {
     const spr = ITEM.gem[g.v >= 20 ? 2 : g.v >= 5 ? 1 : 0];
@@ -1069,9 +1249,29 @@ function render(dt) {
       ctx.globalAlpha = e.alpha;
     }
     drawSpr(fr, e.x, e.y + bob, e.sc, flip, e.flash > 0 ? 'W' : '');
-    if (frozen && e.type !== 'reaper') drawSpr(fr, e.x, e.y + bob, e.sc, flip, 'B');
+    if ((frozen && e.type !== 'reaper') || e.slowT > 0) drawSpr(fr, e.x, e.y + bob, e.sc, flip, 'B');
+    if (e.legend) {
+      ctx.globalAlpha = 0.35 + Math.sin(frameT * 6) * 0.15;
+      ctx.fillStyle = '#ff2030'; ctx.beginPath(); ctx.ellipse(e.x, e.y + h / 2, 12, 4, 0, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
     ctx.globalAlpha = 1;
     if (e.type === 'reaper') drawScythe(e, flip);
+  }
+  // wandering hidden hero: shimmering, with a "?" bubble
+  const N = R.npc;
+  if (N && CHAR_SPR[N.id]) {
+    const fr = CHAR_SPR[N.id][((N.anim || frameT) * 5 | 0) % 2];
+    shadow(N.x, N.y + 8, 5);
+    ctx.globalAlpha = 0.55 + Math.sin(frameT * 6) * 0.2;
+    for (const [ddx, ddy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) drawSpr(fr, N.x + ddx, N.y + ddy, 1, N.faceX < 0, 'W');
+    ctx.globalAlpha = 1;
+    drawSpr(fr, N.x, N.y, 1, N.faceX < 0);
+    const by = N.y - 15 + Math.sin(frameT * 4) * 1.5;
+    ctx.fillStyle = '#fff'; ctx.fillRect(N.x - 4, by - 5, 8, 9);
+    ctx.fillStyle = '#7040c0'; ctx.font = '700 8px G, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', N.x, by);
+    ctx.textBaseline = 'alphabetic';
+    if (Math.random() < 0.3) R.parts.push({ x: N.x + rand(-7, 7), y: N.y + rand(-8, 6), vx: 0, vy: -20, t: 0, life: 0.5, c: pick(['#d0b0ff', '#ffffff', '#ffd040']), sz: 1 });
   }
   // players (partner first so the local hero is drawn on top)
   for (const Q of R.players) if (Q !== P && !Q.gone) drawPlayer(Q);
@@ -1089,6 +1289,7 @@ function render(dt) {
   if (R.flashT > 0) { ctx.fillStyle = `rgba(255,255,255,${Math.min(0.8, R.flashT * 2)})`; ctx.fillRect(0, 0, cv.width, cv.height); }
   drawNums(ox, oy);
   if (R.players.length > 1) drawTags(ox, oy);
+  drawSecretMarks(ox, oy);
   drawHud();
   drawJoystick();
 }
@@ -1207,6 +1408,32 @@ function drawTags(ox, oy) {
   }
   ctx.textBaseline = 'alphabetic';
 }
+// screen-edge pointers: gold arrow + distance to the treasure, a blinking "?" toward a wandering hero
+function edgeArrow(sx, sy, col, label) {
+  const d = view.dpr, W = cv.width, H = cv.height, margin = 26 * d;
+  const cx = W / 2, cy = H / 2, dx = sx - cx, dy = sy - cy;
+  const k = Math.min((W / 2 - margin) / Math.abs(dx || 1e-6), (H / 2 - margin - 50 * d) / Math.abs(dy || 1e-6));
+  const ax = cx + dx * k, ay = cy + dy * k, a = Math.atan2(dy, dx);
+  ctx.save(); ctx.translate(ax, ay); ctx.rotate(a);
+  ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(14 * d, 0); ctx.lineTo(-7 * d, -10 * d); ctx.lineTo(-7 * d, 10 * d); ctx.fill();
+  ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(11 * d, 0); ctx.lineTo(-5 * d, -7 * d); ctx.lineTo(-5 * d, 7 * d); ctx.fill();
+  ctx.restore();
+  hudText(label, ax - Math.cos(a) * 22 * d, ay - Math.sin(a) * 18 * d, 11, col, 'center');
+}
+function drawSecretMarks(ox, oy) {
+  const R = run, S = view.S, W = cv.width, H = cv.height, P = R.me;
+  ctx.textBaseline = 'middle';
+  const off = (x, y) => { const sx = x * S + ox, sy = y * S + oy; return sx < 0 || sx > W || sy < 0 || sy > H ? [sx, sy] : null; };
+  if (R.treasure) {
+    const T = R.treasure, o = off(T.x, T.y);
+    if (o) edgeArrow(o[0], o[1], '#ffd040', '✕ ' + Math.round(Math.hypot(T.x - P.x, T.y - P.y) / 10) + 'm');
+  }
+  if (R.npc && Math.sin(frameT * 5) > -0.3) {
+    const o = off(R.npc.x, R.npc.y);
+    if (o) edgeArrow(o[0], o[1], '#d0b0ff', '?');
+  }
+  ctx.textBaseline = 'alphabetic';
+}
 function drawScythe(e, flip) {
   const s = flip ? -1 : 1, x = e.x + 9 * s, y = e.y;
   ctx.fillStyle = '#5a3a22'; ctx.fillRect(x - 0.5, y - 14, 1.5, 24);
@@ -1303,6 +1530,18 @@ function drawFx(f) {
     ctx.fillStyle = '#ff8030'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.7 + k * 0.5), 0, TAU); ctx.fill();
     ctx.fillStyle = '#ffe080'; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.4 + k * 0.3), 0, TAU); ctx.fill();
     ctx.globalAlpha = 1;
+    return;
+  }
+  if (f.kind === 'reap') {
+    // a full sweeping crescent around the hero
+    ctx.save();
+    ctx.globalAlpha = 1 - k * k;
+    const a0 = (f.side || 1) * k * TAU * 1.1 - Math.PI / 2;
+    ctx.strokeStyle = f.evo ? 'rgba(192,112,255,0.35)' : 'rgba(216,224,240,0.3)'; ctx.lineWidth = f.r * 0.5;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * 0.72, a0 - 2.2 * (f.side || 1), a0, (f.side || 1) < 0); ctx.stroke();
+    ctx.strokeStyle = f.evo ? '#e0a0ff' : '#ffffff'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, a0 - 1.2 * (f.side || 1), a0, (f.side || 1) < 0); ctx.stroke();
+    ctx.restore();
     return;
   }
   if (f.kind === 'slash') {

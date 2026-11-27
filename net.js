@@ -9,7 +9,7 @@
 const MAX_PLAYERS = 4;
 const SNAP_DT = 0.05;
 const PKINDS = ['bolt', 'dagger', 'axe', 'cross', 'scythe', 'orb', 'flask', 'pool'];
-const PICKS = ['coin', 'bag', 'chicken', 'magnet', 'bomb', 'ice', 'chest'];
+const PICKS = ['coin', 'bag', 'chicken', 'magnet', 'bomb', 'ice', 'chest', 'map'];
 const SPINNERS = { axe: 12, cross: 12, scythe: 14, flask: 10 };
 
 // guest: always goes to the host. host: `to` = guest slot, or 0 for every guest
@@ -306,6 +306,8 @@ function encodeSnap(G) {
       p.down ? 1 : 0, r1(p.revP), r1(p.downT), r1(p.auraR), p.auraEvo ? 1 : 0, p.gone ? 1 : 0]),
     pk: R.pickups.filter(p => near(p.x, p.y)).map(p => [PICKS.indexOf(p.type), Math.round(p.x), Math.round(p.y)]),
     pr: R.props.filter(p => !p.dead && near(p.x, p.y)).map(p => [Math.round(p.x), Math.round(p.y), r1(p.ph)]),
+    tr: R.treasure ? [Math.round(R.treasure.x), Math.round(R.treasure.y), r1(R.treasure.dig)] : 0,
+    np: R.npc ? [R.npc.id, r1(R.npc.x), r1(R.npc.y), R.npc.faceX] : 0,
     ev,
   };
   const hb = enc.encode(JSON.stringify(head));
@@ -462,6 +464,11 @@ function onSnap(buf) {
   });
   R.pickups = h.pk.filter(a => PICKS[a[0]]).map(a => ({ type: PICKS[a[0]], x: a[1], y: a[2] }));
   R.props = h.pr.map(a => ({ x: a[0], y: a[1], ph: a[2], dead: false }));
+  R.treasure = Array.isArray(h.tr) ? { x: h.tr[0], y: h.tr[1], dig: h.tr[2] } : null;
+  if (Array.isArray(h.np) && CHAR_SPR[h.np[0]]) {
+    if (!R.npc || R.npc.id !== h.np[0]) R.npc = { id: h.np[0], anim: 0 };
+    track(R.npc, h.np[1], h.np[2], dts); R.npc.faceX = h.np[3];
+  } else R.npc = null;
   for (const e of h.ev) guestEvent(e);
 
   let o = 4 + hl;
@@ -519,6 +526,15 @@ function guestEvent(e) {
     case 'f': R.fx.push(Object.assign({}, e[1], { t: 0 })); break;
     case 's': if (sfx[e[1]]) sfx[e[1]](); break;
     case 'b': R.banner = { text: String(e[1]), color: e[2], t: e[3], dur: e[3] }; break;
+    // hidden content rewards land in each player's own save
+    case 'G': { const v = Math.min(+e[1] || 0, TREASURE_GOLD); save.gold += v; persist(); break; }
+    case 'U': {
+      if (!CHARS.some(c => c.id === e[1])) break;
+      const line = unlockLocal(e[1]);
+      R.banner = { text: String(e[2]), color: e[3], t: 3, dur: 3 };
+      setTimeout(() => { if (run === R) R.banner = { text: line, color: '#fff0c0', t: 3.5, dur: 3.5 }; }, 3000);
+      break;
+    }
   }
 }
 function guestUpdate(dt) {
@@ -545,6 +561,7 @@ function guestUpdate(dt) {
     if (running && SPINNERS[p.kind]) p.rot += SPINNERS[p.kind] * dt;
   }
   for (const p of R.players) if (p !== P) { step(p); if (p.moving && running) p.anim += dt; }
+  if (R.npc && R.npc.tx !== undefined) { step(R.npc); if (running) R.npc.anim += dt; }
   if (R.flashT > 0) R.flashT -= dt;
   R.shake = Math.max(0, R.shake - dt * 12);
   if (R.banner && (R.banner.t -= dt) <= 0) R.banner = null;

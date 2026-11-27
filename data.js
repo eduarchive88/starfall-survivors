@@ -126,6 +126,7 @@ const ICON_ROWS = {
   luck: ['.kkk.kkk..', 'kgggkgggk.', 'kgggggggk.', '.kgggggk..', 'kgggggggk.', 'kgggkgggk.', '.kkkgkkk..', '....kgk...', '.....kgk..', '......kk..'],
   growth: ['..........', 'k...kk...k', 'kk.kyyk.kk', 'kykyyyykyk', 'kyyyyyyyyk', 'kyryyyyryk', 'kyyyyyyyyk', 'kkkkkkkkkk', '..........', '..........'],
   reroll: ['kkkkkkkkkk', 'kwwwwwwwwk', 'kwkkwwwwwk', 'kwkkwwwwwk', 'kwwwkkwwwk', 'kwwwkkwwwk', 'kwwwwwkkwk', 'kwwwwwkkwk', 'kwwwwwwwwk', 'kkkkkkkkkk'],
+  soulscythe: ['.kkkkkk...', 'kwwwwwwk..', '.kkkkwwwk.', '.....kbwk.', '....kbk...', '...kbk....', '..kbk.....', '.kbk......', 'kbk.......', 'kk........'],
   skip: ['..........', 'k...k.....', 'kk..kk....', 'kyk.kyk...', 'kyykkyyk..', 'kyykkyyk..', 'kyk.kyk...', 'kk..kk....', 'k...k.....', '..........'],
 };
 const ICON_PAL = {
@@ -143,6 +144,7 @@ const ICON_PAL = {
   area: [{ c: '#80c0ff', b: '#8a5a2a' }], speed: [{ w: '#e0f0ff' }], duration: [{ y: '#ffe040', o: '#ff8020', w: '#f0e8d0', d: '#8a6a40' }],
   amount: [{ c: '#a0d8ff' }], move: [{ b: '#9a6a3a' }], luck: [{ g: '#40c060' }], growth: [{ y: '#ffd040', r: '#e03040' }],
   reroll: [{ w: '#f0f0f0' }], skip: [{ y: '#80c0ff' }],
+  soulscythe: [{ w: '#d8e0f0', b: '#5a3a22' }, { w: '#c070ff', b: '#2a1a3a' }],
 };
 const ICONS = {};
 for (const id in ICON_ROWS) ICONS[id] = ICON_PAL[id].map(p => makeSprite(ICON_ROWS[id], p));
@@ -193,6 +195,7 @@ const ITEM = {
   brazier: makeSprite(R_BRAZIER, { y: '#c08040', w: '#f0c080', d: '#6a4a30' }),
   tomb: makeSprite(R_TOMB, { g: '#6e6e80', w: '#9a9aaa' }),
   bush: makeSprite(R_BUSH, { g: '#2f6a32', w: '#4a8a4a' }),
+  map: makeSprite(['kkkkkkkkkk', 'kyyyyyyyyk', 'kyrryyyyyk', 'kyyrdyyryk', 'kyyyddrryk', 'kyyyyyrryk', 'kyyyyryyrk', 'kyyyyyyyyk', 'kkkkkkkkkk'], { y: '#e8d098', r: '#d03020', d: '#a08050' }),
 };
 
 // ground decorations for the stage maps
@@ -226,7 +229,18 @@ const CHARS = [
   { id: 'alchemist', name: '피오', title: '떠돌이 연금술사', weapon: 'flask', hp: 100, bonus: { area: 0.1 }, desc: '범위 +10% · 체력 100', cost: 2200 },
   { id: 'paladin', name: '에린', title: '성기사', weapon: 'cross', hp: 115, bonus: { speed: 0.15 }, desc: '투사체 속도 +15%', cost: 3000 },
   { id: 'scholar', name: '오르', title: '룬 학자', weapon: 'runes', hp: 95, bonus: { duration: 0.15 }, desc: '지속시간 +15% · 체력 95', cost: 4000 },
+  // hidden heroes: wander their stage (index `hidden`) and join when touched; can also be bought for a high price
+  { id: 'druid', name: '실바', title: '숲의 드루이드', weapon: 'aura', hp: 115, bonus: { recovery: 1, area: 0.2 }, desc: '초당 회복 +1 · 범위 +20% · 체력 115', perk: 'bloom', perkDesc: '생명의 꽃: 체력이 절반 아래로 떨어지면 회복량이 3배가 돼요', cost: 30000, hidden: 1 },
+  { id: 'frost', name: '니베', title: '서리 마녀', weapon: 'bolt', hp: 95, bonus: { cooldown: -0.2, duration: 0.2 }, desc: '쿨다운 -20% · 지속시간 +20% · 체력 95', perk: 'chill', perkDesc: '서리 손길: 공격에 맞은 적이 1.5초 동안 느려져요 (보스·사신도!)', cost: 40000, hidden: 3 },
+  { id: 'sage', name: '모라', title: '늪의 현자', weapon: 'flask', hp: 105, bonus: { area: 0.25, might: 0.15 }, desc: '범위 +25% · 공격력 +15% · 체력 105', perk: 'venom', perkDesc: '맹독: 공격에 맞은 적이 3초 동안 독에 걸려 계속 피해를 입어요', cost: 50000, hidden: 5 },
+  { id: 'dragoon', name: '이그나', title: '화염 용기사', weapon: 'axe', hp: 150, bonus: { might: 0.3, armor: 2, move: -0.05 }, desc: '공격력 +30% · 방어 +2 · 체력 150', perk: 'ember', perkDesc: '용의 분노: 피해를 받으면 주변에 화염 폭발을 일으켜요', cost: 65000, hidden: 7 },
+  { id: 'stella', name: '스텔라', title: '별의 아이', weapon: 'cross', hp: 100, bonus: { amount: 1, luck: 0.3 }, desc: '투사체 +1 · 행운 +30% · 체력 100', perk: 'starfall', perkDesc: '유성우: 7초마다 화면 속 적들에게 별똥별이 쏟아져요', cost: 80000, hidden: 9 },
+  // legendary: only by slaying the reaper that rises after a stage clear
+  { id: 'heir', name: '모르', title: '사신의 계승자', weapon: 'soulscythe', hp: 140, bonus: { might: 0.3, amount: 1, move: 0.15 }, desc: '공격력 +30% · 투사체 +1 · 이동 +15% · 체력 140', perk: 'reap', perkDesc: '불멸: 한 번 쓰러져도 부활 · 적을 처치할 때마다 체력 흡수', legend: true },
 ];
+// hidden content tuning
+const REAPER_LEGEND_HP = 1800000; // the first reaper after a clear can be slain: same speed and instant death, fixed HP
+const TREASURE_GOLD = 1000, MAP_CHANCE = 0.18, NPC_CHANCE = 0.065, NPC_LIFE = 40, OWNED_BONUS = 2000;
 // hero sprites (14x16): every hero has their own silhouette — 13 rows of body + 3 rows of legs, 2 walk frames
 const LEGS_PANTS = [
   ['...kdk..kdk...', '...kbk..kbk...', '...kkk..kkk...'],
@@ -376,6 +390,96 @@ const HERO_TOP = {
     'knwwwnkkcckk..',
     'knnnnkddddk...',
   ],
+  druid: [
+    '.n..kkkkkk..n.',
+    '.nnkggggggknn.',
+    '..kgglggglgk..',
+    '..khhhhhhhhk..',
+    '..khsssssshk..',
+    '..khseesseshk.',
+    '..khhssssshhk.',
+    '.kggkkkkkkggk.',
+    'kgccccaaccccgk',
+    'kgcccaaaacccgk',
+    'kscccccccccsk.',
+    '.kkccccdcccck.',
+    '..kccccddcck..',
+  ],
+  frost: [
+    '......kk......',
+    '.....kwck.....',
+    '....kccwck....',
+    '...kcccccck...',
+    '.kkkkkkkkkkkk.',
+    '..khhhhhhhhk..',
+    '..khseesseshk.',
+    '..khssssssshk.',
+    '.hkkwwkkwwkkh.',
+    'hkcccwwwwccckh',
+    '.kscccwwcccsk.',
+    '.kkcccwwccckk.',
+    '..kcccddccck..',
+  ],
+  sage: [
+    '....kkkkkk....',
+    '..kkmwmmmwkk..',
+    '.kmmmmmmmmmmk.',
+    'kmwmmmmwmmmmwk',
+    'kkkkkkkkkkkkkk',
+    '..kgeggggegk..',
+    '..kggggrgggk..',
+    '.kkkgggggkkk..',
+    'kcccccaaccccck',
+    'kgccoccccocgk.',
+    '.kcoooccooock.',
+    '.kccccddcccck.',
+    '..kccddddcck..',
+  ],
+  dragoon: [
+    '.kw..kkkk..wk.',
+    '.kwkkrrrrkkwk.',
+    '..kkrrrrrrkk..',
+    '..krryyyyrrk..',
+    '..krkekkekrk..',
+    '..krrkkkkrrk..',
+    '...krrrrrrk...',
+    'kkkkkyyyykkkkk',
+    'krrrkrrrrkrrrk',
+    'kryrkrrrrkryrk',
+    'kkkkrryyrrkkkk',
+    '.k.krrrrrrk.k.',
+    '...kddddddk...',
+  ],
+  stella: [
+    '.....kyk......',
+    '....kyyyk.....',
+    '..kkkkykkkk...',
+    '.khhhhhhhhhk..',
+    '.khhsssssshk..',
+    '.khseesseshhk.',
+    '.khhssssshhhk.',
+    '..khkkkkkkhk..',
+    '.kcccwcccyck..',
+    'kccycccccccwck',
+    'kscccccyccccsk',
+    '.kkcwcccccyck.',
+    '..kcccccccck..',
+  ],
+  heir: [
+    '....kkkkkk....',
+    '...kcccccck...',
+    '..kcccccccck..',
+    '.kcccdddddcck.',
+    '.kccdkkkkkdck.',
+    '.kccdkrkkrdck.',
+    '.kccddkkkddck.',
+    'kcccccwwccccck',
+    'kccccwwwwcccck',
+    'kcccccrrccccck',
+    'ksccccccccccsk',
+    '.kccccddcccck.',
+    '..kcdcccdcdk..',
+  ],
 };
 const HERO_PAL = {
   knight: { m: '#c8d0dc', n: '#7a8698', c: '#3a64c8', d: '#253f85', a: '#f2c94c', r: '#e03a3a', e: '#9fe8ff', b: '#4a3020' },
@@ -387,8 +491,14 @@ const HERO_PAL = {
   alchemist: { h: '#5a321e', g: '#50c878', w: '#e8f0e0', c: '#b04a3a', d: '#6e2a22', a: '#ffd040', b: '#3a2010' },
   paladin: { w: '#ffffff', a: '#e8c050', r: '#c03040', m: '#c8d0dc', e: '#1b1424', d: '#8a6a20', b: '#6a4a20' },
   scholar: { s: '#f2c29b', h: '#d8d8e0', g: '#9fd8ff', c: '#2f7f7f', d: '#1d5050', n: '#8a3a2a', w: '#f0e8d0', e: '#1b1424', b: '#3a2a1a' },
+  druid: { n: '#b08050', g: '#3a8a3a', l: '#9ae070', h: '#c06a30', c: '#5a7a3a', d: '#3a5228', a: '#ff80b0', e: '#1b1424', b: '#4a3020' },
+  frost: { c: '#4a90d8', w: '#e8f6ff', h: '#c0e4ff', d: '#2a5a98', e: '#3060c0', b: '#2a3a60' },
+  sage: { m: '#c05a2a', w: '#f0e0c0', g: '#7aa860', e: '#ffe040', r: '#c04060', c: '#5a3a7a', d: '#3a2450', a: '#a0ff40', o: '#a0ff40', b: '#2a1a20' },
+  dragoon: { r: '#c83020', y: '#ffb020', w: '#f0e8d0', e: '#ffe040', d: '#6a1810', b: '#3a1810' },
+  stella: { y: '#ffe040', h: '#f0f0ff', c: '#2a2a6a', w: '#ffffff', d: '#1a1a4a', e: '#40d0ff', b: '#1a1a3a' },
+  heir: { c: '#3e3458', d: '#221c34', r: '#ff3030', w: '#e8e4d0', s: '#d8d0e0', b: '#151220' },
 };
-const HERO_LEGS = { knight: LEGS_PANTS, mage: LEGS_ROBE, rogue: LEGS_PANTS, priest: LEGS_ROBE, dwarf: LEGS_SHORT, shaman: LEGS_PANTS, alchemist: LEGS_PANTS, paladin: LEGS_PANTS, scholar: LEGS_ROBE };
+const HERO_LEGS = { knight: LEGS_PANTS, mage: LEGS_ROBE, rogue: LEGS_PANTS, priest: LEGS_ROBE, dwarf: LEGS_SHORT, shaman: LEGS_PANTS, alchemist: LEGS_PANTS, paladin: LEGS_PANTS, scholar: LEGS_ROBE, druid: LEGS_ROBE, frost: LEGS_ROBE, sage: LEGS_ROBE, dragoon: LEGS_PANTS, stella: LEGS_ROBE, heir: LEGS_ROBE };
 const CHAR_SPR = {};
 for (const c of CHARS) CHAR_SPR[c.id] = HERO_LEGS[c.id].map(l => makeSprite(HERO_TOP[c.id].concat(l), HERO_PAL[c.id]));
 
@@ -455,6 +565,12 @@ const WEAPONS = {
     levels: [{ dmg: 10 }, { amount: 1 }, { area: 0.1, speed: 0.25 }, { amount: 1 }, { dmg: 10 }, { area: 0.1, speed: 0.25 }, { dmg: 10 }],
     evo: { dmg: 10, area: 0.3 },
     evo2: { dmg: 20, amount: 1, area: 0.2 } },
+  // exclusive to 모르 (never offered on level-up or in chests)
+  soulscythe: { name: '영혼의 낫', desc: '주위를 한 바퀴 크게 베어 모든 적을 가르는 사신의 낫.', evoName: '명계의 대낫', evoWith: 'might', evoDesc: '더 넓고 강하게 베며 치명타가 터져요.', exclusive: true,
+    base: { dmg: 16, cd: 2.2, area: 1, amount: 1 },
+    levels: [{ dmg: 6 }, { area: 0.15 }, { cd: -0.25 }, { dmg: 8 }, { amount: 1 }, { area: 0.15 }, { dmg: 10 }],
+    evo: { dmg: 20, area: 0.3, cd: -0.3 },
+    evo2: { dmg: 30, amount: 1 } },
 };
 const MAX_WLV = 8;
 // 진화 강화(2단계): weapon `id` gets stronger once it AND its partner are both evolved
@@ -465,6 +581,7 @@ const EVO2 = {
   dagger: { with: 'axe', combo: '칼날 폭풍' }, axe: { with: 'dagger', combo: '칼날 폭풍' },
   runes: { with: 'cross', combo: '성역' }, cross: { with: 'runes', combo: '성역' },
   flask: { with: 'thunder', combo: '불벼락' },
+  soulscythe: { with: 'blade', combo: '죽음의 무도' },
 };
 
 const POWERUPS = [

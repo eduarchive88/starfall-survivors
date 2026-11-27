@@ -21,6 +21,15 @@ function iconByName(name) {
   return sprURL(ICONS[name][0], 'i' + name);
 }
 function charURL(id) { return sprURL(CHAR_SPR[id][0], 'c' + id); }
+// black silhouette for heroes that are still a secret
+function charShadowURL(id) {
+  const k = 'cs' + id;
+  if (urlCache[k]) return urlCache[k];
+  const spr = CHAR_SPR[id][0], c = makeCanvas(spr.w * 4, spr.h * 4), x = c.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  x.drawImage(variant(spr, 'D'), 0, 0, c.width, c.height);
+  return (urlCache[k] = c.toDataURL());
+}
 
 const screens = ['title', 'chars', 'stages', 'shop', 'book', 'settings', 'levelup', 'chest', 'pause', 'result', 'mp', 'lobby'];
 function show(id) {
@@ -49,10 +58,10 @@ function showChars() {
   const g = $('charGrid');
   g.innerHTML = '';
   for (const c of CHARS) {
-    const owned = save.chars[c.id];
+    const owned = save.chars[c.id], secret = !owned && (c.hidden !== undefined || c.legend);
     const el = document.createElement('div');
-    el.className = 'cc' + (c.id === selChar ? ' sel' : '') + (owned ? '' : ' lock');
-    el.innerHTML = `<img src="${charURL(c.id)}" alt=""><div class="n">${c.name}</div><div class="dim">${owned ? c.title : '● ' + c.cost}</div>`;
+    el.className = 'cc' + (c.id === selChar ? ' sel' : '') + (owned ? '' : ' lock') + (c.legend ? ' legend' : c.hidden !== undefined ? ' hid' : '');
+    el.innerHTML = `<img src="${secret ? charShadowURL(c.id) : charURL(c.id)}" alt=""><div class="n">${secret ? '???' : c.name}</div><div class="dim">${owned ? c.title : c.legend ? '💀 ???' : '● ' + c.cost.toLocaleString()}</div>`;
     el.onclick = () => { sfx.click(); selChar = c.id; showChars(); };
     g.appendChild(el);
   }
@@ -60,12 +69,28 @@ function showChars() {
   const W = WEAPONS[c.weapon];
   const owned = save.chars[c.id];
   const best = save.best[c.id];
+  if (!owned && (c.hidden !== undefined || c.legend)) {
+    // secret heroes: only a rumour of where to find them
+    const hint = c.legend ? '스테이지를 클리어하면 깨어나는 사신… 그 사신을 쓰러뜨린 자만이 이 힘을 얻을 수 있어요.' : `${STAGES[c.hidden].name} 어딘가를 떠돈다는 소문이 있어요. 아주 드물게 마주칠 수 있대요.`;
+    $('charInfo').innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center">
+      <img class="ico" src="${charShadowURL(c.id)}" alt="">
+      <div><div style="font-weight:700;font-size:17px">??? <span class="dim" style="font-size:13px">${c.legend ? '전설의 캐릭터' : '숨은 캐릭터'}</span></div>
+      <div class="dim" style="font-size:13px;margin-top:3px">${hint}</div></div>
+    </div>`;
+    const go = $('bGo');
+    if (c.legend) { go.textContent = '사신을 쓰러뜨려 해금'; go.disabled = true; }
+    else { go.textContent = `● ${c.cost.toLocaleString()} 골드로 해금`; go.disabled = save.gold < c.cost; }
+    show('chars');
+    return;
+  }
   $('charInfo').innerHTML = `
     <div style="display:flex;gap:10px;align-items:center">
       <img class="ico" src="${weaponIcon(c.weapon)}" alt="">
       <div><div style="font-weight:700;font-size:17px">${c.name} <span class="dim" style="font-size:13px">${c.title}</span></div>
       <div style="font-size:13px;margin-top:3px">시작 무기: <b>${W.name}</b></div>
       <div class="dim" style="font-size:13px;margin-top:2px">${c.desc}</div>
+      ${c.perkDesc ? `<div style="font-size:12px;margin-top:2px" class="gold-t">${c.perkDesc}</div>` : ''}
       ${best ? `<div style="font-size:12px;margin-top:2px" class="${save.clears[c.id] ? 'gold-t' : 'dim'}">${save.clears[c.id] ? '★ 클리어 · ' : ''}최고 ${fmtTime(best)}</div>` : ''}</div>
     </div>`;
   const go = $('bGo');
@@ -79,7 +104,7 @@ on('bCharBack', () => { if (charPickMode) { const f = charPickMode; charPickMode
 on('bGo', () => {
   const c = CHARS.find(x => x.id === selChar);
   if (!save.chars[c.id]) {
-    if (save.gold < c.cost) return;
+    if (c.legend || save.gold < c.cost) return;
     save.gold -= c.cost; save.chars[c.id] = true; persist();
     sfx.chest();
     showChars();
@@ -243,6 +268,7 @@ function recipeHTML(filter) {
   let h = '';
   for (const id in WEAPONS) {
     if (filter && !filter(id)) continue;
+    if (WEAPONS[id].exclusive && !save.chars.heir) continue; // the reaper's scythe stays a secret until earned
     const W = WEAPONS[id];
     h += `<div class="recipe"><img class="ico sm" src="${weaponIcon(id)}" alt=""><span class="plus">+</span><img class="ico sm" src="${passiveIconURL(W.evoWith)}" alt=""><span class="plus">→</span><img class="ico sm" src="${weaponIcon(id, true)}" alt="">
       <div class="nm"><b>${W.evoName}</b><br><span class="dim" style="font-size:11px">${W.name} Lv8 + ${PASSIVES[W.evoWith].name}</span></div></div>`;
@@ -253,6 +279,7 @@ function comboHTML(filter) {
   let h = '';
   for (const id in EVO2) {
     if (filter && !filter(id)) continue;
+    if (WEAPONS[id].exclusive && !save.chars.heir) continue;
     const W = WEAPONS[id], P = WEAPONS[EVO2[id].with];
     h += `<div class="recipe"><img class="ico sm" src="${weaponIcon(id, true)}" alt=""><span class="plus">+</span><img class="ico sm" src="${weaponIcon(EVO2[id].with, true)}" alt=""><span class="plus">→</span><img class="ico sm" src="${weaponIcon(id, true)}" alt="">
       <div class="nm"><b>${W.evoName}+</b> <span class="gold-t" style="font-size:11px">${EVO2[id].combo}</span><br><span class="dim" style="font-size:11px">${W.evoName} + ${P.evoName}</span></div></div>`;
@@ -308,7 +335,7 @@ function weightedPick(arr) {
 function rollChoices() {
   const R = run, pool = [];
   for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ type: 'wup', id: w.id, w: 3 });
-  if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
+  if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!WEAPONS[id].exclusive && !R.weapons.find(w => w.id === id)) pool.push({ type: 'wnew', id, w: 1 });
   for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ type: 'pup', id, w: 2.5 });
   if (R.passiveOrder.length < R.player.pMax) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ type: 'pnew', id, w: 1 });
   const n = 3 + (Math.random() < Math.min(0.9, 0.1 + (st.luck - 1) * 0.9) ? 1 : 0);
@@ -449,7 +476,7 @@ function rollChestItems(count, fresh) {
     for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ kind: 'w', id: w.id, w: 1.5 });
     for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ kind: 'p', id, w: 1.5 });
     if (fresh) {
-      if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!R.weapons.find(w => w.id === id)) pool.push({ kind: 'w', id, w: 1, nw: 1 });
+      if (R.weapons.length < R.player.wMax) for (const id in WEAPONS) if (!WEAPONS[id].exclusive && !R.weapons.find(w => w.id === id)) pool.push({ kind: 'w', id, w: 1, nw: 1 });
       if (R.passiveOrder.length < R.player.pMax) for (const id in PASSIVES) if (!R.passives[id]) pool.push({ kind: 'p', id, w: 0.6, nw: 1 });
     }
     if (!pool.length) { items.push({ kind: 'gold' }); R.gold += 40; continue; }
@@ -620,6 +647,16 @@ function simPick() {
   use(run.me);
 }
 function simBot(P = run.me) {
+  // reaper fight: circle the slayable reaper at close range so every weapon can reach it
+  const L = run.bossBar && run.bossBar.legend && !run.bossBar.dead ? run.bossBar : null;
+  if (L) {
+    const dx = P.x - L.x, dy = P.y - L.y, d = Math.hypot(dx, dy) || 1;
+    let mx = -dy / d, my = dx / d;
+    if (d < 18) { mx += dx / d; my += dy / d; } else if (d > 30) { mx -= dx / d; my -= dy / d; }
+    const l = Math.hypot(mx, my) || 1;
+    if (P === run.me) input.bot = [mx / l, my / l]; else P.bot = [mx / l, my / l];
+    return;
+  }
   let fx = 0, fy = 0;
   for (const e of run.enemies) {
     const dx = P.x - e.x, dy = P.y - e.y, d2 = dx * dx + dy * dy;
@@ -650,12 +687,13 @@ function runSim(charId, powered, duo, si = 0) {
   state = 'play';
   let steps = 0, nextSnap = 60;
   const dt = 1 / 30, snaps = [];
-  while (state === 'play' && run.t < STAGE_LEN + 30 && steps < 30 * 60 * 25) {
+  const tEnd = STAGE_LEN + (window.SIM_REAPER ? 180 : 30);
+  while (state === 'play' && run.t < tEnd && steps < 30 * 60 * 25) {
     for (const p of run.players) if (p.ctrl !== 'remote') simBot(p);
     update(dt); if (run.me.pending) simPick(); steps++;
     if (run.t >= nextSnap) { nextSnap += 60; snaps.push(`${Math.round(run.t / 60)}m L${run.level} k${run.kills} e${run.enemies.length} dmgIn${Math.round(run.taken || 0)}`); }
   }
-  const out = { stage: si + 1, char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo2 ? '**' : w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
+  const out = { stage: si + 1, char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, legend: run.legendDown ? 'slain' : run.bossBar && run.bossBar.legend ? Math.round(run.bossBar.hp) : '-', secrets: { map: run.mapAt, treasure: run.treasure ? 1 : 0, npc: run.npc ? run.npc.id : run.npcAt }, gold_save: save.gold, chars: Object.keys(save.chars).join(','), weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo2 ? '**' : w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
   save = saved;
   input.bot = null;
   return out;
@@ -670,6 +708,8 @@ if (SIM) {
   const chars = (qs.get('chars') || 'knight,mage,rogue').split(',');
   window.SIM_GOD = qs.get('god') === '1';
   window.SIM_VAC = qs.get('vac') === '1';
+  window.SIM_REAPER = qs.get('reaper') === '1';
+  window.SIM_SECRET = qs.get('secret') === '1';
   const res = [];
   const duo = qs.get('duo');
   const stages = (qs.get('stages') || '1').split(',').map(n => (+n || 1) - 1);

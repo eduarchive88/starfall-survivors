@@ -263,7 +263,7 @@ function sendInv(G) {
   if (!G) return;
   const dmg = {};
   for (const k in G.dmgBy) dmg[k] = Math.round(G.dmgBy[k]);
-  netSend({ t: 'inv', w: G.weapons.map(w => [w.id, w.lvl, w.evo ? 1 : 0]), ps: G.passives, po: G.passiveOrder, st: G.st, rr: G.rerolls, sk: G.skips, dmg }, G.slot);
+  netSend({ t: 'inv', w: G.weapons.map(w => [w.id, w.lvl, w.evo ? 1 : 0, w.evo2 ? 1 : 0]), ps: G.passives, po: G.passiveOrder, st: G.st, rr: G.rerolls, sk: G.skips, dmg }, G.slot);
 }
 function netGameOver() {
   const R = run;
@@ -398,7 +398,7 @@ function guestMsg(m) {
     case 'inv': {
       if (!run || !run.me) break;
       const p = run.me;
-      p.weapons = (m.w || []).filter(a => WEAPONS[a[0]]).map(([id, lvl, evo]) => ({ id, lvl, evo: !!evo }));
+      p.weapons = (m.w || []).filter(a => WEAPONS[a[0]]).map(([id, lvl, evo, evo2]) => ({ id, lvl, evo: !!evo, evo2: !!evo2 }));
       p.passives = {}; p.passiveOrder = [];
       for (const id of m.po || []) if (PASSIVES[id]) { p.passiveOrder.push(id); p.passives[id] = m.ps[id] | 0; }
       if (m.st && m.st.maxHp) p.st = m.st;

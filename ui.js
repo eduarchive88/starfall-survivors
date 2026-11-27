@@ -203,7 +203,17 @@ function recipeHTML(filter) {
   }
   return h;
 }
-on('bBook', () => { $('bookList').innerHTML = recipeHTML(); show('book'); });
+function comboHTML(filter) {
+  let h = '';
+  for (const id in EVO2) {
+    if (filter && !filter(id)) continue;
+    const W = WEAPONS[id], P = WEAPONS[EVO2[id].with];
+    h += `<div class="recipe"><img class="ico sm" src="${weaponIcon(id, true)}" alt=""><span class="plus">+</span><img class="ico sm" src="${weaponIcon(EVO2[id].with, true)}" alt=""><span class="plus">→</span><img class="ico sm" src="${weaponIcon(id, true)}" alt="">
+      <div class="nm"><b>${W.evoName}+</b> <span class="gold-t" style="font-size:11px">${EVO2[id].combo}</span><br><span class="dim" style="font-size:11px">${W.evoName} + ${P.evoName}</span></div></div>`;
+  }
+  return h;
+}
+on('bBook', () => { $('bookList').innerHTML = '<div class="dim center" style="font-size:12px;margin-bottom:4px">1단계 · 진화</div>' + recipeHTML() + '<div class="dim center" style="font-size:12px;margin:8px 0 4px">2단계 · 진화 강화</div>' + comboHTML(); show('book'); });
 on('bBookBack', showTitle);
 function togglesHTML() {
   const t = (k, label) => `<div class="toggle"><span>${label}</span><button data-k="${k}" class="${save[k] ? 'on' : ''}">${save[k] ? '켜짐' : '꺼짐'}</button></div>`;
@@ -272,6 +282,15 @@ function applyChoice(c) {
   for (const w of R.weapons) if (evoReady(w) && !hinted[w.id]) {
     hinted[w.id] = true;
     pbanner(`${WEAPONS[w.id].name} 진화 준비 완료! 보물상자를 찾으세요`, '#ffd040', 3.5);
+  }
+  evo2Hint();
+}
+// called after any change that could complete a 진화 강화 pair (level-up pick or chest)
+function evo2Hint() {
+  const R = run, hinted = R.player.evoHinted;
+  for (const w of R.weapons) if (evo2Ready(w) && !hinted['2' + w.id]) {
+    hinted['2' + w.id] = true;
+    pbanner(`${EVO2[w.id].combo} 조합 완성! 보물상자를 열면 ${WEAPONS[w.id].evoName} 강화`, '#ffd040', 3.5);
   }
 }
 function choiceCard(c) {
@@ -352,6 +371,8 @@ function openChest(boss) {
   for (let i = 0; i < count; i++) {
     const ew = R.weapons.find(evoReady);
     if (ew) { evolveWeapon(ew); items.push({ kind: 'evo', id: ew.id }); continue; }
+    const e2 = R.weapons.find(evo2Ready);
+    if (e2) { empowerWeapon(e2); items.push({ kind: 'evo2', id: e2.id }); continue; }
     const pool = [];
     for (const w of R.weapons) if (w.lvl < MAX_WLV) pool.push({ kind: 'w', id: w.id });
     for (const id of R.passiveOrder) if (R.passives[id] < PASSIVES[id].max) pool.push({ kind: 'p', id });
@@ -363,6 +384,7 @@ function openChest(boss) {
   const g = Math.round((boss ? rand(80, 150) : rand(20, 60)) * (late ? 1.5 : 1));
   R.gold += g;
   if (SIM) return;
+  evo2Hint();
   if (R.player !== R.me) { netChest(R.player, items, count, Math.round(g * st.greed)); return; }
   showChest(items, count, Math.round(g * st.greed));
 }
@@ -370,9 +392,10 @@ function showChest(items, count, g) {
   state = 'chest';
   input.active = false;
   sfx.chest(); vibrate(60);
-  $('chestTitle').textContent = items.some(i => i.kind === 'evo') ? '진화!' : count > 1 ? `보물상자 ×${count}!` : '보물상자!';
+  $('chestTitle').textContent = items.some(i => i.kind === 'evo2') ? '진화 강화!' : items.some(i => i.kind === 'evo') ? '진화!' : count > 1 ? `보물상자 ×${count}!` : '보물상자!';
   $('chestItems').innerHTML = items.map(it => {
     if (it.kind === 'evo') { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}<span class="tag">진화</span></div><div class="d">${W.evoDesc}</div></div></div>`; }
+    if (it.kind === 'evo2' && EVO2[it.id]) { const W = WEAPONS[it.id]; return `<div class="card evo chest-item"><img class="ico" src="${weaponIcon(it.id, true)}" alt=""><div><div class="t gold-t">${W.evoName}+<span class="tag">강화</span></div><div class="d">${EVO2[it.id].combo} 조합 완성! 진화 무기가 더 강력해졌어요.</div></div></div>`; }
     if (it.kind === 'w') return `<div class="card chest-item"><img class="ico" src="${weaponIcon(it.id)}" alt=""><div><div class="t">${WEAPONS[it.id].name}<span class="tag">Lv ${it.lv}</span></div></div></div>`;
     if (it.kind === 'p') return `<div class="card chest-item"><img class="ico" src="${passiveIconURL(it.id)}" alt=""><div><div class="t">${PASSIVES[it.id].name}<span class="tag">Lv ${it.lv}</span></div></div></div>`;
     return `<div class="card chest-item"><img class="ico" src="${iconByName('coin')}" alt=""><div><div class="t">금화</div></div></div>`;
@@ -388,7 +411,7 @@ on('bChestOk', () => { state = 'play'; show(null); if (NET.role === 'guest') net
 // ============================================================
 function invHTML() {
   const R = run;
-  $('pWeapons').innerHTML = R.weapons.map(w => `<div class="slot"><img class="ico sm" src="${weaponIcon(w.id, w.evo)}" title="${weaponName(w)}" alt=""><span class="lv">${w.evo ? '★' : w.lvl}</span></div>`).join('');
+  $('pWeapons').innerHTML = R.weapons.map(w => `<div class="slot"><img class="ico sm" src="${weaponIcon(w.id, w.evo)}" title="${weaponName(w)}" alt=""><span class="lv">${w.evo2 ? '★★' : w.evo ? '★' : w.lvl}</span></div>`).join('');
   $('pPassives').innerHTML = R.passiveOrder.map(id => `<div class="slot"><img class="ico sm" src="${passiveIconURL(id)}" alt=""><span class="lv">${R.passives[id]}</span></div>`).join('') || '<span class="dim" style="font-size:12px">없음</span>';
 }
 function pct(v) { const p = Math.round((v - 1) * 100); return (p >= 0 ? '+' : '') + p + '%'; }
@@ -404,7 +427,10 @@ function openPause() {
   ].map(([a, b]) => `<div class="stat"><span class="dim">${a}</span><b>${b}</b></div>`).join('');
   const owned = id => run.weapons.find(w => w.id === id && !w.evo);
   const rec = recipeHTML(owned);
-  $('pRecipes').innerHTML = rec ? `<div class="dim center" style="font-size:12px;margin-bottom:4px">보유 무기 진화법</div>${rec}` : '<div class="dim center" style="font-size:12px">모든 무기가 진화했어요!</div>';
+  const rec2 = comboHTML(id => run.weapons.some(w => w.id === id && w.evo && !w.evo2));
+  $('pRecipes').innerHTML = (rec ? `<div class="dim center" style="font-size:12px;margin-bottom:4px">보유 무기 진화법</div>${rec}` : '')
+    + (rec2 ? `<div class="dim center" style="font-size:12px;margin:6px 0 4px">진화 강화 조합</div>${rec2}` : '')
+    || '<div class="dim center" style="font-size:12px">모든 무기가 최대로 강해졌어요!</div>';
   $('pToggles').innerHTML = togglesHTML();
   bindToggles($('pToggles'));
   $('bQuit').textContent = NET.role ? '이번 판 나가기' : '포기하기';
@@ -557,7 +583,7 @@ function runSim(charId, powered, duo, si = 0) {
     update(dt); if (run.me.pending) simPick(); steps++;
     if (run.t >= nextSnap) { nextSnap += 60; snaps.push(`${Math.round(run.t / 60)}m L${run.level} k${run.kills} e${run.enemies.length} dmgIn${Math.round(run.taken || 0)}`); }
   }
-  const out = { stage: si + 1, char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
+  const out = { stage: si + 1, char: charId + (duo ? '+' + duo : ''), powered, t: Math.round(run.t), lv: run.level, kills: run.kills, gold: Math.round(run.gold), cleared: run.cleared, weapons: run.players.map(p => p.weapons.map(w => w.id + (w.evo2 ? '**' : w.evo ? '*' : w.lvl)).join(',')).join(' | '), takenBy: run.takenBy, snaps, dmg: Object.fromEntries(Object.entries(run.me.dmgBy).map(([k, v]) => [k, Math.round(v)])) };
   save = saved;
   input.bot = null;
   return out;

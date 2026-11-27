@@ -197,10 +197,11 @@ function wstats(w) {
   const add = u => { for (const k in u) s[k] = (s[k] || 0) + u[k]; };
   for (let i = 0; i < w.lvl - 1; i++) add(d.levels[i]);
   if (w.evo) add(d.evo);
+  if (w.evo2) add(d.evo2);
   return s;
 }
 function addWeapon(id) {
-  const w = { id, lvl: 1, evo: false, t: 0.3, orbs: [] };
+  const w = { id, lvl: 1, evo: false, evo2: false, t: 0.3, orbs: [] };
   w.s = wstats(w);
   run.weapons.push(w);
   return w;
@@ -215,6 +216,11 @@ function evolveWeapon(w) {
   w.s = wstats(w);
   if (w.id === 'runes') resetOrbs(w);
 }
+function empowerWeapon(w) {
+  w.evo2 = true;
+  w.s = wstats(w);
+  if (w.id === 'runes') resetOrbs(w);
+}
 function resetOrbs(w) { for (const o of w.orbs) o.dead = true; w.orbs = []; w.t = 0; }
 function addPassive(id) {
   const R = run;
@@ -222,7 +228,8 @@ function addPassive(id) {
   R.passives[id] = (R.passives[id] || 0) + 1;
   computeStats();
 }
-function weaponName(w) { return w.evo ? WEAPONS[w.id].evoName : WEAPONS[w.id].name; }
+function weaponName(w) { return w.evo2 ? WEAPONS[w.id].evoName + '+' : w.evo ? WEAPONS[w.id].evoName : WEAPONS[w.id].name; }
+function evo2Ready(w) { return w.evo && !w.evo2 && run.weapons.some(x => x.id === EVO2[w.id].with && x.evo); }
 function evoReady(w) { return !w.evo && w.lvl >= MAX_WLV && run.passives[WEAPONS[w.id].evoWith] > 0; }
 
 // ============================================================
@@ -1371,7 +1378,8 @@ function drawHud() {
   for (const w of R.weapons) {
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, isz, isz);
     ctx.drawImage(ICONS[w.id][w.evo ? 1 : 0].c, x + 2 * d, y + 2 * d, isz - 4 * d, isz - 4 * d);
-    if (evoReady(w)) { ctx.strokeStyle = Math.sin(frameT * 8) > 0 ? '#ffd040' : '#fff'; ctx.lineWidth = d; ctx.strokeRect(x + d / 2, y + d / 2, isz - d, isz - d); }
+    if (w.evo2) { ctx.strokeStyle = '#ffd040'; ctx.lineWidth = d; ctx.strokeRect(x + d / 2, y + d / 2, isz - d, isz - d); }
+    if (evoReady(w) || evo2Ready(w)) { ctx.strokeStyle = Math.sin(frameT * 8) > 0 ? '#ffd040' : '#fff'; ctx.lineWidth = d; ctx.strokeRect(x + d / 2, y + d / 2, isz - d, isz - d); }
     x += isz + gap;
   }
   x = 6 * d; y += isz + gap;
